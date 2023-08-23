@@ -10,8 +10,8 @@
 --]]
 
 -- parameters
-local PARAM_TABLE_KEY = 39
-assert(param:add_table(PARAM_TABLE_KEY, "G2P", 5), "could not add param table")
+local PARAM_TABLE_KEY = 40
+assert(param:add_table(PARAM_TABLE_KEY, "G2P_", 5), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G2P_DEBUG param")
 
 -- bind parameters to variables
@@ -262,9 +262,9 @@ end
 function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
 
   -- convert angles from deg to G2P protocol
-  local roll_angle_output = math.floor(roll_angle_deg * 26 + 32767 )
-  local pitch_angle_output = math.floor(pitch_angle_deg * 26 + 32767)
-  local yaw_angle_output = math.floor(yaw_angle_deg * 26 + 32767)
+  local roll_angle_output = math.floor((roll_angle_deg * 26 + 32767) + 0.5)
+  local pitch_angle_output = math.floor((pitch_angle_deg * 26 + 32767) + 0.5)
+  local yaw_angle_output = math.floor((yaw_angle_deg * 26 + 32767) + 0.5)
 
   -- create packet
   local packet_to_send = {HEADER_SEND,
