@@ -21,7 +21,7 @@ local G2P_DEBUG = Parameter("G2P_DEBUG")  -- debug level. 0:disabled 1:enabled 2
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
-local UPDATE_INTERVAL_MS = 100          -- update at 10hz
+local UPDATE_INTERVAL_MS = 5          -- update at 200hz
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 
 -- packet parsing definitions
@@ -60,7 +60,7 @@ local bytes_error = 0                   -- number of bytes read that could not b
 local msg_ignored = 0                   -- number of ignored messages (because frame id does not match)
 
 -- debug variables
-local last_test_send_md = 0             -- system time that a test message was last sent
+local debug_count = 0                   -- system time that a test message was last sent
 local debug_buff = {}                   -- debug buffer to display bytes from gimbal
 
 -- get lowbyte of a number
@@ -168,7 +168,7 @@ function parse_byte(b)
     bytes_read = bytes_read + 1
 
     -- debug
-    if G2P_DEBUG:get() > 1 then
+    if G2P_DEBUG:get() > 2 then
       debug_buff[#debug_buff+1] = b
       if #debug_buff >= 10 then
         gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: %x %x %x %x %x %x %x %x %x %x", debug_buff[1], debug_buff[2], debug_buff[3], debug_buff[4], debug_buff[5], debug_buff[6], debug_buff[7], debug_buff[8], debug_buff[9], debug_buff[10]))
@@ -250,7 +250,7 @@ function write_bytes(buff,len)
     packet_string = packet_string .. byte_to_write .. " "
   end
 
-  if G2P_DEBUG:get() > 1 then
+  if G2P_DEBUG:get() > 2 then
     gcs:send_text(MAV_SEVERITY.INFO, packet_string)
   end
   
@@ -260,11 +260,14 @@ end
 -- send target angles (in degrees) to gimbal
 -- yaw_angle_deg is always a body-frame angle
 function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
+  if G2P_DEBUG:get() > 1 then
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P send angles P: %f R: %f Y; %f", pitch_angle_deg, roll_angle_deg, yaw_angle_deg))
+  end
 
   -- convert angles from deg to G2P protocol
-  local roll_angle_output = math.floor((roll_angle_deg * 26 + 32767) + 0.5)
-  local pitch_angle_output = math.floor((pitch_angle_deg * 26 + 32767) + 0.5)
-  local yaw_angle_output = math.floor((yaw_angle_deg * 26 + 32767) + 0.5)
+  local roll_angle_output = math.floor(roll_angle_deg * 26 + 32767 )
+  local pitch_angle_output = math.floor(pitch_angle_deg * 26 + 32767)
+  local yaw_angle_output = math.floor(yaw_angle_deg * 26 + 32767)
 
   -- create packet
   local packet_to_send = {HEADER_SEND,
@@ -296,12 +299,6 @@ function update()
     return update, INIT_INTERVAL_MS
   end
 
-  -- status reporting
-  if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
-    last_print_ms = now_ms
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: r:%u w:%u err:%u ign:%u", bytes_read, bytes_written, bytes_error, msg_ignored))
-  end
-
   -- consume incoming bytes
   read_incoming_packets()
 
@@ -314,6 +311,15 @@ function update()
     send_target_angles(pitch_deg, roll_deg, yaw_deg)
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
+  end
+
+  -- status reporting
+  debug_count = debug_count + 1
+  if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
+    last_print_ms = now_ms
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: r:%u w:%u err:%u ign:%u", bytes_read, bytes_written, bytes_error, msg_ignored))
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, last angle sent: R = %f, P = %f, Y = %f", debug_count//5, roll_deg, pitch_deg, yaw_deg))
+    debug_count = 0
   end
 
   return update, UPDATE_INTERVAL_MS
