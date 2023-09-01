@@ -265,9 +265,9 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   end
 
   -- convert angles from deg to G2P protocol
-  local roll_angle_output = math.floor(roll_angle_deg * 26 + 32767 )
-  local pitch_angle_output = math.floor(pitch_angle_deg * 26 + 32767)
-  local yaw_angle_output = math.floor(yaw_angle_deg * 26 + 32767)
+  local roll_angle_output = math.floor(roll_angle_deg * 80 + 32767 + 0.5)
+  local pitch_angle_output = math.floor(pitch_angle_deg * 80 + 32767 + 0.5)
+  local yaw_angle_output = math.floor(yaw_angle_deg * 80 + 32767 + 0.5)
 
   -- create packet
   local packet_to_send = {HEADER_SEND,
