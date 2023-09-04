@@ -1,13 +1,13 @@
 -- camera-GPS.lua: Send GNSS coordinates to camera through custom serial protocol
 
 -- user selectable parameters
-local DEBUG = 2
+local DEBUG = 1
 local BAUD_RATE = 115200
+local INIT_INTERVAL_MS = 3000 -- attempt to initialise the camera and GPS at this interval
+local UPDATE_INTERVAL_MS = 500 -- update at 2 Hz
 
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY = 0, ALERT = 1, CRITICAL = 2, ERROR = 3, WARNING = 4, NOTICE = 5, INFO = 6, DEBUG = 7}
-local INIT_INTERVAL_MS = 3000 -- attempt to initialise the gimbal at this interval
-local UPDATE_INTERVAL_MS = 500 -- update at 2 Hz
 local GPS_INSTANCE = gps:primary_sensor()
 
 -- packet parsing definitions
@@ -34,7 +34,7 @@ local parse_data_buff = {} -- parsed data buffer
 local parse_data_bytes_recv = 0 -- count of the number of bytes received in the message so far
 
 -- parsing status reporting variables
-local last_print_ms = 0 -- system time that debug output was last printed
+local last_ms = 0 -- system time that debug output was last printed
 local bytes_read = 0 -- number of bytes read from gimbal
 local bytes_written = 0 -- number of bytes written to gimbal
 local bytes_error = 0 -- number of bytes read that could not be parsed
@@ -130,17 +130,6 @@ function int16_value(hbyte, lbyte)
   end
 end
 
--- calculate checksum
-function calc_checksum(packet, len)
-  local ck_a = 0
-  local ck_b = 0
-  for i = 2, len, 1 do
-    ck_a = ck_a + packet[i]
-    ck_b = ck_b + ck_a
-  end
-  return ck_a, ck_b
-end
-
 -- find and initialise serial port connected to gimbal
 function init()
   -- find and init second instance of SERIALx_PROTOCOL = 28 (Scripting)
@@ -160,7 +149,7 @@ function send_GPS()
   -- check GPS fix
   if gps:status(GPS_INSTANCE) < 3 and DEBUG < 1 then
     -- wait for GPS fix
-    return
+    return false
   end
 
   -- calculate packet variables
@@ -226,6 +215,7 @@ function send_GPS()
 
   -- send packet
   write_bytes(packet_to_send, #packet_to_send)
+  return true
 end
 
 -- reading incoming packets from gimbal
@@ -249,7 +239,7 @@ function parse_byte(b)
       gcs:send_text(
         MAV_SEVERITY.INFO,
         string.format(
-          "G2P: %x %x %x %x %x %x %x %x %x %x",
+          "CAM: %x %x %x %x %x %x %x %x %x %x",
           debug_buff[1],
           debug_buff[2],
           debug_buff[3],
@@ -292,8 +282,6 @@ end
 
 -- the main update function
 function update()
-  -- get current system time
-  local now_ms = millis()
 
   -- initialise connection to gimbal
   if not initialised then
@@ -305,9 +293,15 @@ function update()
   read_incoming_packets()
 
   -- send EXIF GPS
-  send_GPS()
+  if not send_GPS() then
+    if DEBUG > 0 then
+      gcs:send_text(MAV_SEVERITY.ERROR, "CAM: GPS not healthy")
+    end
+    return update, INIT_INTERVAL_MS
+    end
 
   return update, UPDATE_INTERVAL_MS
+
 end
 
 return update()
