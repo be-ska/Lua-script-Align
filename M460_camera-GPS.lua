@@ -49,48 +49,50 @@ local SECONDS_IN_MINUTE = 60
 local SECONDS_IN_HOUR = 3600
 local SECONDS_IN_DAY = 86400
 local SECONDS_IN_WEEK = 604800
-local LEAP_SECONDS = 19 -- GPS leap seconds (leap seconds from 5/01/1980)
+local LEAP_SECONDS = 18 -- GPS leap seconds (leap seconds from 5/01/1980)
+local GPS_TO_UNIX = 315964800
+local UNIX_TO_2023 = 1672531200
 
 function getLocalDateTime(time_week, time_week_ms)
-  local time_ms = time_week_ms:toint()
-  local time_s = math.floor(time_ms / 1000)
 
-  -- Convert GPS time to epoch and add leap seconds
-  local epoch = (time_week * SECONDS_IN_WEEK + time_s) - LEAP_SECONDS + 315964800
+    local time_s = math.floor((time_week_ms:toint())/1000)
 
-  -- Calculate the number of days and seconds since the Unix epoch
-  local days = math.floor(epoch / SECONDS_IN_DAY)
-  local seconds = epoch % SECONDS_IN_DAY
+    -- Convert GPS time to epoch and add leap seconds
+    local epoch = (time_week * SECONDS_IN_WEEK + time_s) - LEAP_SECONDS + GPS_TO_UNIX - UNIX_TO_2023
 
-  -- Calculate the number of years and days
-  local years = 1970
-  local daysInYear = 365
-  while days >= daysInYear do
-    if (years % 4 == 0) then
-      daysInYear = 366 -- Leap year
-    else
-      daysInYear = 365 -- Non-leap year
+    -- Calculate the number of days and seconds since the Unix epoch
+    local days = math.floor(epoch / SECONDS_IN_DAY)
+    local seconds = epoch % SECONDS_IN_DAY
+
+    -- Calculate the number of years and days
+    local years = 2023
+    local daysInYear = 365
+    while days >= daysInYear do
+        if (years % 4 == 0) then
+            daysInYear = 366 -- Leap year
+        else
+            daysInYear = 365 -- Non-leap year
+        end
+        days = days - daysInYear
+        years = years + 1
     end
-    days = days - daysInYear
-    years = years + 1
-  end
-  -- Calculate the number of months and days
-  local months = 1
-  local daysInMonth = {31, 28 + (daysInYear == 366 and 1 or 0), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
-  while days >= daysInMonth[months] do
-    days = days - daysInMonth[months]
-    months = months + 1
-  end
-  -- Calculate the UTC date and time components
-  days = days + 1 -- Add 1 because days are 0-based
-  local hour = math.floor(seconds / SECONDS_IN_HOUR)
-  seconds = seconds % SECONDS_IN_HOUR
-  local minute = math.floor(seconds / SECONDS_IN_MINUTE)
-  local second = math.floor(seconds % SECONDS_IN_MINUTE)
+    -- Calculate the number of months and days
+    local months = 1
+    local daysInMonth = {31, 28 + (daysInYear == 366 and 1 or 0), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+    while days >= daysInMonth[months] do
+        days = days - daysInMonth[months]
+        months = months + 1
+    end
+    -- Calculate the UTC date and time components
+    days = days + 1 -- Add 1 because days are 0-based
+    local hour = math.floor(seconds / SECONDS_IN_HOUR)
+    seconds = seconds % SECONDS_IN_HOUR
+    local minute = math.floor(seconds / SECONDS_IN_MINUTE)
+    local second = seconds % SECONDS_IN_MINUTE
 
-  local date = years * 10000 + months * 100 + days
-  local time = hour * 10000 + minute * 100 + second
-  return date, time
+    local date = years*10000 + months*100 + days
+    local time = hour*10000 + minute*100 + second
+    return date, time
 end
 
 -- get lowbyte of a number
