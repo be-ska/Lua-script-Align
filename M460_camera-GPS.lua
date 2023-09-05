@@ -1,7 +1,7 @@
 -- camera-GPS.lua: Send GNSS coordinates to camera through custom serial protocol
 
 -- user selectable parameters
-local DEBUG = 1
+local DEBUG = 2
 local BAUD_RATE = 115200
 local INIT_INTERVAL_MS = 3000 -- attempt to initialise the camera and GPS at this interval
 local UPDATE_INTERVAL_MS = 500 -- update at 2 Hz
