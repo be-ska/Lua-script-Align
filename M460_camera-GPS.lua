@@ -1,7 +1,7 @@
 -- camera-GPS.lua: Send GNSS coordinates to camera through custom serial protocol
 
 -- user selectable parameters
-local DEBUG = 2
+local DEBUG = 0
 local BAUD_RATE = 115200
 local INIT_INTERVAL_MS = 3000 -- attempt to initialise the camera and GPS at this interval
 local UPDATE_INTERVAL_MS = 500 -- update at 2 Hz
@@ -54,45 +54,44 @@ local GPS_TO_UNIX = 315964800
 local UNIX_TO_2023 = 1672531200
 
 function getLocalDateTime(time_week, time_week_ms)
+  local time_s = math.floor((time_week_ms:toint()) / 1000)
 
-    local time_s = math.floor((time_week_ms:toint())/1000)
+  -- Convert GPS time to epoch and add leap seconds
+  local epoch = (time_week * SECONDS_IN_WEEK + time_s) - LEAP_SECONDS + GPS_TO_UNIX - UNIX_TO_2023
 
-    -- Convert GPS time to epoch and add leap seconds
-    local epoch = (time_week * SECONDS_IN_WEEK + time_s) - LEAP_SECONDS + GPS_TO_UNIX - UNIX_TO_2023
+  -- Calculate the number of days and seconds since the Unix epoch
+  local days = math.floor(epoch / SECONDS_IN_DAY)
+  local seconds = epoch % SECONDS_IN_DAY
 
-    -- Calculate the number of days and seconds since the Unix epoch
-    local days = math.floor(epoch / SECONDS_IN_DAY)
-    local seconds = epoch % SECONDS_IN_DAY
-
-    -- Calculate the number of years and days
-    local years = 2023
-    local daysInYear = 365
-    while days >= daysInYear do
-        if (years % 4 == 0) then
-            daysInYear = 366 -- Leap year
-        else
-            daysInYear = 365 -- Non-leap year
-        end
-        days = days - daysInYear
-        years = years + 1
+  -- Calculate the number of years and days
+  local years = 2023
+  local daysInYear = 365
+  while days >= daysInYear do
+    if (years % 4 == 0) then
+      daysInYear = 366 -- Leap year
+    else
+      daysInYear = 365 -- Non-leap year
     end
-    -- Calculate the number of months and days
-    local months = 1
-    local daysInMonth = {31, 28 + (daysInYear == 366 and 1 or 0), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
-    while days >= daysInMonth[months] do
-        days = days - daysInMonth[months]
-        months = months + 1
-    end
-    -- Calculate the UTC date and time components
-    days = days + 1 -- Add 1 because days are 0-based
-    local hour = math.floor(seconds / SECONDS_IN_HOUR)
-    seconds = seconds % SECONDS_IN_HOUR
-    local minute = math.floor(seconds / SECONDS_IN_MINUTE)
-    local second = seconds % SECONDS_IN_MINUTE
+    days = days - daysInYear
+    years = years + 1
+  end
+  -- Calculate the number of months and days
+  local months = 1
+  local daysInMonth = {31, 28 + (daysInYear == 366 and 1 or 0), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+  while days >= daysInMonth[months] do
+    days = days - daysInMonth[months]
+    months = months + 1
+  end
+  -- Calculate the UTC date and time components
+  days = days + 1 -- Add 1 because days are 0-based
+  local hour = math.floor(seconds / SECONDS_IN_HOUR)
+  seconds = seconds % SECONDS_IN_HOUR
+  local minute = math.floor(seconds / SECONDS_IN_MINUTE)
+  local second = seconds % SECONDS_IN_MINUTE
 
-    local date = years*10000 + months*100 + days
-    local time = hour*10000 + minute*100 + second
-    return date, time
+  local date = years * 10000 + months * 100 + days
+  local time = hour * 10000 + minute * 100 + second
+  return date, time
 end
 
 -- get lowbyte of a number
@@ -144,6 +143,27 @@ function init()
   end
 end
 
+function checksum(packet, len)
+  local t = 1
+  local crc = 0x00
+
+  while len > 0 do
+    crc = crc ~ packet[t]
+    t = t + 1
+    for i = 8, 1, -1 do
+      local msb = crc & 0x80
+      crc = crc << 1
+
+      if msb > 0 then
+        crc = crc ~ 0xD5
+      end
+    end
+    len = len - 1
+  end
+
+  return crc & 0xFF
+end
+
 -- send EXIF GPS message
 function send_GPS()
   -- check GPS fix
@@ -178,6 +198,10 @@ function send_GPS()
     date = 20200511
   end
 
+  if DEBUG > 0 then
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("Long: %d, Lat: %d, Alt: %d, Vel: %d", lng, lat, alt, velocity))
+  end
+
   -- define packet
   local packet_to_send = {
     HEADER_SEND, -- header
@@ -210,8 +234,11 @@ function send_GPS()
     byte2(date),
     byte3(date),
     byte4(date),
-    168
+    0
   }
+
+  -- calculate checksum
+  packet_to_send[31] = checksum(packet_to_send, 30)
 
   -- send packet
   write_bytes(packet_to_send, #packet_to_send)
@@ -282,7 +309,6 @@ end
 
 -- the main update function
 function update()
-
   -- initialise connection to gimbal
   if not initialised then
     init()
@@ -298,10 +324,9 @@ function update()
       gcs:send_text(MAV_SEVERITY.ERROR, "CAM: GPS not healthy")
     end
     return update, INIT_INTERVAL_MS
-    end
+  end
 
   return update, UPDATE_INTERVAL_MS
-
 end
 
 return update()
