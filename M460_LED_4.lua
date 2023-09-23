@@ -1,9 +1,9 @@
 local count = 0
+local flip = true
 local RELAY_NUM1 = 0
 local RELAY_NUM2 = 1
 local RELAY_NUM3 = 2
 local RELAY_NUM4 = 3
-local LOITER_MODE = 5
 local ALTHOLD_MODE = 2
 local RTL_MODE = 6
 local AUTO_MODE = 3
@@ -25,7 +25,16 @@ end
 function led()
     if arming:is_armed() then
         -- if armed different flash pattern with different flight modes
-        if vehicle:get_mode() == ALTHOLD_MODE then
+        if fence:get_breaches() ~= 0 then
+            if flip then
+                light_on()
+                flip = false
+            else
+                light_off()
+                flip = true
+            end
+            return led, 50
+        elseif vehicle:get_mode() == ALTHOLD_MODE then
             if count == 0 then
                 light_off()
             else
@@ -81,7 +90,6 @@ function led()
         count = count + 1
     end
 
-    
     return led, 250
 end
 
