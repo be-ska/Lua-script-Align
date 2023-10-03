@@ -1,3 +1,4 @@
+-- control the blade distance from the ground of Align GA22
 
 -- user parameters
 local SERVO_HEIGHT = 1
@@ -37,7 +38,7 @@ function set_distance(step)
     end
     if step > 0 then
         millis_update = step*STEP_TO_MILLIS
-        SRV_Channels:set_output_pwm_chan_timeout(SERVO_HEIGHT, PWM_UP, millis_update) 
+        SRV_Channels:set_output_pwm_chan_timeout(SERVO_HEIGHT, PWM_UP, millis_update)
     elseif step < 0 then
         millis_update = -step*STEP_TO_MILLIS
         SRV_Channels:set_output_pwm_chan_timeout(SERVO_HEIGHT, PWM_DOWN, millis_update)
