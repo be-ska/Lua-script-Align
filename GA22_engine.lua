@@ -8,6 +8,8 @@ local MILLIS_UPDATE = 100
 local START_PIN = 57 -- AP3 ch 8
 local FUEL_PIN = 58 -- AP3 ch 9
 local IGNITION_PIN = 59 -- AP3 ch 10
+local IGNITION_ON = 1
+local IGNITION_OFF = 0
 local START_ON = 1
 local START_OFF = 0
 
@@ -36,6 +38,7 @@ local _fuel_state = -1
 local _starter_first = true
 gpio:pinMode(FUEL_PIN,0) -- set fuel pin as input
 gpio:pinMode(IGNITION_PIN,1) -- set ignition pin as output
+gpio:write(IGNITION_PIN, IGNITION_OFF) -- set ignition off
 gpio:pinMode(START_PIN,1) -- set ignition pin as output
 gpio:write(START_PIN, START_OFF) -- set starter pin off
 
@@ -57,12 +60,12 @@ end
 
 function set_ignition ()
     if rc:get_pwm(_ign_rcin) > 1600 then
-        gpio:write(IGNITION_PIN, 1)
+        gpio:write(IGNITION_PIN, IGNITION_ON)
         if ENG_DEBUG:get() > 1 then
             gcs:send_text('6', "Ignition ON")
         end
     else
-        gpio:write(IGNITION_PIN, 0)
+        gpio:write(IGNITION_PIN, IGNITION_OFF)
         if ENG_DEBUG:get() > 1 then
             gcs:send_text('6', "Ignition OFF")
         end
