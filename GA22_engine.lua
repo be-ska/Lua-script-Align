@@ -13,11 +13,11 @@ local START_OFF = 0
 
 -- parameters
 local PARAM_TABLE_KEY = 41
-assert(param:add_table(PARAM_TABLE_KEY, "ENG_", 3), "could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "ENG_", 4), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add param 1")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "FUEL", 0), "could not add param 2")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "IGN_RCIN", 8), "could not add param 3")
-assert(param:add_param(PARAM_TABLE_KEY, 4, "START_CH", 7), "could not add param 4")
+assert(param:add_param(PARAM_TABLE_KEY, 4, "START_CH", 5), "could not add param 4")
 
 -- bind parameters to variables
 local ENG_DEBUG = Parameter()
@@ -37,6 +37,7 @@ local _starter_first = true
 gpio:pinMode(FUEL_PIN,0) -- set fuel pin as input
 gpio:pinMode(IGNITION_PIN,1) -- set ignition pin as output
 gpio:pinMode(START_PIN,1) -- set ignition pin as output
+gpio:write(START_PIN, START_OFF) -- set starter pin off
 
 function check_channels_params()
     _ign_rcin = ENG_IGN_RCIN:get()
