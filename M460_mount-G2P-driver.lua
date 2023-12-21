@@ -29,7 +29,7 @@ local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
-local UPDATE_INTERVAL_MS = 5          -- update at 200hz
+local UPDATE_INTERVAL_MS = 20           -- update at 50hz
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 
 -- packet parsing definitions
