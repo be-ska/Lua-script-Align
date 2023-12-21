@@ -18,6 +18,14 @@ assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G2P_DEBUG
 local MNT1_TYPE = Parameter("MNT1_TYPE")    -- should be 9:Scripting
 local G2P_DEBUG = Parameter("G2P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
 
+-- MNT parametrs
+local MNT1_PITCH_MAX = Parameter("MNT1_PITCH_MAX")
+local MNT1_PITCH_MIN = Parameter("MNT1_PITCH_MIN")
+local MNT1_ROLL_MAX = Parameter("MNT1_ROLL_MAX")
+local MNT1_ROLL_MIN = Parameter("MNT1_ROLL_MIN")
+local MNT1_YAW_MAX = Parameter("MNT1_YAW_MAX")
+local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
+
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
@@ -48,9 +56,10 @@ local uart                              -- uart object connected to mount
 local initialised = false               -- true once connection to gimbal has been initialised
 local parse_state = PARSE_STATE_WAITING_FOR_HEADER -- parse state
 local parse_length = 0                  -- incoming message parsed length
-local parse_operation = 0               -- incoming message command id
-local parse_data_buff = {}              -- parsed data buffer
 local parse_data_bytes_recv = 0         -- count of the number of bytes received in the message so far
+local roll = 0
+local pitch = 0
+local yaw = 0
 
 -- parsing status reporting variables
 local last_print_ms = 0                 -- system time that debug output was last printed
@@ -122,6 +131,11 @@ function init()
   -- check mount parameter
   if MNT1_TYPE:get() ~= 9 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: set MNT1_TYPE=9")
+    do return end
+  end
+
+  if MNT1_PITCH_MAX:get() == nil or MNT1_PITCH_MIN:get() == nil or MNT1_ROLL_MAX:get() == nil or MNT1_ROLL_MIN:get() == nil or MNT1_YAW_MAX:get() == nil or MNT1_YAW_MIN:get() == nil then
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: check MNT1_ parameters")    
     do return end
   end
 
@@ -304,11 +318,42 @@ function update()
 
   -- send target angle to gimbal
   local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
+  local roll_degs, pitch_degs, yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
   if roll_deg and pitch_deg and yaw_deg then
     if yaw_is_ef then
       yaw_deg = wrap_180(yaw_deg - math.deg(ahrs:get_yaw()))
     end
-    send_target_angles(pitch_deg, roll_deg, yaw_deg)
+    roll = roll_deg
+    pitch = pitch_deg
+    yaw = yaw_deg
+    send_target_angles(pitch, roll, yaw)
+  
+  elseif roll_degs and pitch_degs and yaw_degs then
+    roll = roll + roll_degs * UPDATE_INTERVAL_MS / 1000
+    pitch = pitch + pitch_degs * UPDATE_INTERVAL_MS / 1000
+    yaw = yaw + yaw_degs * UPDATE_INTERVAL_MS / 1000
+    if roll > MNT1_ROLL_MAX:get() then
+      roll = MNT1_ROLL_MAX:get()
+    elseif roll < MNT1_ROLL_MIN:get() then
+      roll = MNT1_ROLL_MIN:get()
+    end
+    if pitch > MNT1_PITCH_MAX:get() then
+      pitch = MNT1_PITCH_MAX:get()
+    elseif pitch < MNT1_PITCH_MIN:get() then
+      pitch = MNT1_PITCH_MIN:get()
+    end
+
+    -- a sta merdata di gimbal per lo yaw come input diamo una velocità angolare, non si sa perché 
+    yaw = yaw_degs * 3
+    -- -- questo per quando lo sistemeranno
+    -- if yaw > MNT1_YAW_MAX:get() then
+    --   yaw = MNT1_YAW_MAX:get()
+    -- elseif yaw < MNT1_YAW_MIN:get() then
+    --   yaw = MNT1_YAW_MIN:get()
+    -- end
+    
+    send_target_angles(pitch, roll, yaw)
+
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
   end
@@ -318,7 +363,7 @@ function update()
   if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
     last_print_ms = now_ms
     gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: r:%u w:%u err:%u ign:%u", bytes_read, bytes_written, bytes_error, msg_ignored))
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, last angle sent: R = %f, P = %f, Y = %f", debug_count//5, roll_deg, pitch_deg, yaw_deg))
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, last angle sent: R = %f, P = %f, Y = %f", debug_count//5, roll, pitch, yaw))
     debug_count = 0
   end
 
