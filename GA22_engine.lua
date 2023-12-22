@@ -28,6 +28,7 @@ ENG_REV_STR:init("ENG_REV_STR")
 ENG_CH:init("ENG_CH")
 
 -- global variables and init
+local MODE_HOLD = 4
 local _eng_ch = 0
 local _fuel_state = -1
 local _starter_first = true
@@ -51,8 +52,13 @@ function check_channels_params()
     return update, MILLIS_UPDATE
 end
 
-function set_ignition ()
-    if rc:get_pwm(_eng_ch) > 1350 then
+function set_ignition()
+    if vehicle:get_mode() == MODE_HOLD then
+        gpio:write(IGNITION_PIN, ignition_off)
+        if ENG_DEBUG:get() > 1 then
+            gcs:send_text('6', "Mode HOLD: Ignition OFF")
+        end
+    elseif rc:get_pwm(_eng_ch) > 1350 then
         gpio:write(IGNITION_PIN, ignition_on)
         if ENG_DEBUG:get() > 1 then
             gcs:send_text('6', "Ignition ON")
