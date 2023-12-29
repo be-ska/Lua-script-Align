@@ -353,6 +353,7 @@ function update()
     -- end
     
     send_target_angles(pitch, roll, yaw)
+    mount:set_attitude_euler(MOUNT_INSTANCE, roll, pitch, yaw)
 
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
