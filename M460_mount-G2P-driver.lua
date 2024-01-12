@@ -6,6 +6,7 @@
     Set SERIALx_PROTOCOL = 28 (Scripting) where "x" corresponds to the serial port connected to the gimbal
     Set SCR_ENABLE = 1 to enable scripting and reboot the autopilot
     Set MNT1_TYPE = 9 (Scripting) to enable the mount/gimbal scripting driver
+    Set MNT1_RC_RATE = 60 to use gimbal speed mode
     Copy this script to the autopilot's SD card in the APM/scripts directory and reboot the autopilot
 --]]
 
@@ -13,10 +14,12 @@
 local PARAM_TABLE_KEY = 40
 assert(param:add_table(PARAM_TABLE_KEY, "G2P_", 5), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G2P_DEBUG param")
+assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 50), "could not add G2P_DEBUG param")
 
 -- bind parameters to variables
 local MNT1_TYPE = Parameter("MNT1_TYPE")    -- should be 9:Scripting
 local G2P_DEBUG = Parameter("G2P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
+local G2P_MS = Parameter("G2P_MS")  -- update milliseconds
 
 -- MNT parametrs
 local MNT1_PITCH_MAX = Parameter("MNT1_PITCH_MAX")
@@ -29,7 +32,6 @@ local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
-local UPDATE_INTERVAL_MS = 20           -- update at 50hz
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 
 -- packet parsing definitions
@@ -320,43 +322,21 @@ function update()
   local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local roll_degs, pitch_degs, yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
   if roll_deg and pitch_deg and yaw_deg then
-    if yaw_is_ef then
-      yaw_deg = wrap_180(yaw_deg - math.deg(ahrs:get_yaw()))
-    end
-    roll = roll_deg
-    pitch = pitch_deg
-    yaw = yaw_deg
-    send_target_angles(pitch, roll, yaw)
-  
-  elseif roll_degs and pitch_degs and yaw_degs then
-    roll = roll + roll_degs * UPDATE_INTERVAL_MS / 1000
-    pitch = pitch + pitch_degs * UPDATE_INTERVAL_MS / 1000
-    yaw = yaw + yaw_degs * UPDATE_INTERVAL_MS / 1000
-    if roll > MNT1_ROLL_MAX:get() then
-      roll = MNT1_ROLL_MAX:get()
-    elseif roll < MNT1_ROLL_MIN:get() then
-      roll = MNT1_ROLL_MIN:get()
-    end
-    if pitch > MNT1_PITCH_MAX:get() then
-      pitch = MNT1_PITCH_MAX:get()
-    elseif pitch < MNT1_PITCH_MIN:get() then
-      pitch = MNT1_PITCH_MIN:get()
-    end
+    gcs:send_text(MAV_SEVERITY.ERROR, "G2P: set MNT1_RC_RATE parameter")
+    return update, 2000
 
-    -- a sta merdata di gimbal per lo yaw come input diamo una velocità angolare, non si sa perché 
-    yaw = yaw_degs * 3
-    -- -- questo per quando lo sistemeranno
-    -- if yaw > MNT1_YAW_MAX:get() then
-    --   yaw = MNT1_YAW_MAX:get()
-    -- elseif yaw < MNT1_YAW_MIN:get() then
-    --   yaw = MNT1_YAW_MIN:get()
-    -- end
-    
+  elseif roll_degs and pitch_degs and yaw_degs then
+    roll = roll_degs
+    pitch = pitch_degs
+    yaw = yaw_degs
     send_target_angles(pitch, roll, yaw)
+    
+    -- TODO: need to send this with real angles
     mount:set_attitude_euler(MOUNT_INSTANCE, roll, pitch, yaw)
 
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
+    return update, 2000
   end
 
   -- status reporting
@@ -368,7 +348,7 @@ function update()
     debug_count = 0
   end
 
-  return update, UPDATE_INTERVAL_MS
+  return update, G2P_MS:get()
 end
 
 return update()
