@@ -188,12 +188,12 @@ function init()
   uart_dv = serial:find_serial(1)
   if uart_gimbal == nil or uart_dv == nil then
     gcs:send_text(3, "G2P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
-    gcs:send_text(3, "G2P: first serial for gimbal, secon for camera") -- MAV_SEVERITY_ERR
+    gcs:send_text(3, "G2P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
   else
     uart_gimbal:begin(115200)
-    uart_gimbal:set_flow_control(0)
+    uart_gimbal:set_flow_control(2)
     uart_dv:begin(115200)
-    uart_dv:set_flow_control(0)
+    uart_dv:set_flow_control(2)
     initialised = true
     gcs:send_text(MAV_SEVERITY.INFO, "G2P: started")
   end
@@ -316,7 +316,7 @@ function write_bytes(buff,len, uart)
     packet_string = packet_string .. byte_to_write .. " "
   end
 
-  if G2P_DEBUG:get() > 2 then
+  if G2P_DEBUG:get() > 3 then
     gcs:send_text(MAV_SEVERITY.INFO, packet_string)
   end
   
@@ -464,6 +464,12 @@ function update()
     return update, INIT_INTERVAL_MS
   end
 
+   -- send GPS coordinates at 1 Hz
+   if now_ms - last_dv_ms > 1000 then
+    last_dv_ms = now_ms
+    send_GPS()
+  end
+
   -- consume incoming bytes
   read_incoming_packets()
 
@@ -486,12 +492,6 @@ function update()
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
     return update, 2000
-  end
-
-  -- send GPS coordinates at 1 Hz
-  if now_ms - last_dv_ms > 1000 then
-    last_dv_ms = now_ms
-    send_GPS()
   end
 
   -- status reporting
