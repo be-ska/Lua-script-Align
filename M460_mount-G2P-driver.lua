@@ -33,12 +33,25 @@ local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
+local GPS_INSTANCE = gps:primary_sensor()
 
--- packet parsing definitions
+-- packet definitions for mount
 local HEADER_SEND = 0x18                    -- 1st header byte
 local HEADER_RECEIVE = 0x19                 -- 2nd header byte
 local PACKET_LENGTH_MIN = 6             -- serial packet minimum length.  used for sanity checks
 local PACKET_LENGTH_MAX = 88            -- serial packet maximum length.  used for sanity checks
+
+-- definitions for dv
+local DV_HEADER = 0xAE
+local DV_HEADER2_SEND = 0xA1
+local DV_HEADER2_RECEIVE = 0xA2
+local DV_CMD1 = 0x00
+local DV_CMD2_LATH = 0xA8
+local DV_CMD2_LATL = 0xA9
+local DV_CMD2_LONH = 0xAA
+local DV_CMD2_LONL = 0xAB
+local DV_CMD2_ALT = 0xAC
+local DV_END = 0xEA
 
 -- parsing state definitions
 local PARSE_STATE_WAITING_FOR_HEADER    = 0
@@ -54,7 +67,9 @@ local MOUNT_CMD_CALIBRATE      = 0x04
 
 
 -- local variables and definitions
-local uart                              -- uart object connected to mount
+local uart_gimbal                       -- uart object connected to mount
+local uart_dv                           -- uart object connected to camera
+local last_dv_ms = 0
 local initialised = false               -- true once connection to gimbal has been initialised
 local parse_state = PARSE_STATE_WAITING_FOR_HEADER -- parse state
 local parse_length = 0                  -- incoming message parsed length
@@ -71,7 +86,7 @@ local bytes_error = 0                   -- number of bytes read that could not b
 local msg_ignored = 0                   -- number of ignored messages (because frame id does not match)
 
 -- debug variables
-local debug_count = 0                   -- system time that a test message was last sent
+local debug_count = 0              -- system time that a test message was last sent
 local debug_buff = {}                   -- debug buffer to display bytes from gimbal
 
 -- get lowbyte of a number
@@ -83,6 +98,27 @@ end
 function highbyte(num)
   return (num >> 8) & 0xFF
 end
+
+-- get lowbyte of a number
+function byte1(num)
+  return num & 0xFF
+end
+
+-- get highbyte of a number
+function byte2(num)
+  return (num >> 8) & 0xFF
+end
+
+-- get lowbyte of a number
+function byte3(num)
+  return (num >> 16) & 0xFF
+end
+
+-- get highbyte of a number
+function byte4(num)
+  return (num >> 24) & 0xFF
+end
+
 
 -- get uint16 from two bytes
 function uint16_value(hbyte, lbyte)
@@ -118,7 +154,7 @@ function wrap_180(angle_deg)
 end
 
 -- calculate checksum
-function calc_checksum(packet, len)
+function checksum_mount(packet, len)
   local ck_a = 0;
   local ck_b = 0;
   for i = 2, len, 1 do
@@ -126,6 +162,12 @@ function calc_checksum(packet, len)
     ck_b = ck_b + ck_a;
   end
   return ck_a, ck_b
+end
+function checksum_dv(packet, len)
+  local ck = packet[2] + packet[3] + packet[4] + packet[5] + packet[6];
+  local ck_1 = highbyte(ck);
+  local ck_2 = lowbyte(ck)
+  return ck_1, ck_2
 end
 
 -- find and initialise serial port connected to gimbal
@@ -141,13 +183,17 @@ function init()
     do return end
   end
 
-  -- find and init first instance of SERIALx_PROTOCOL = 28 (Scripting)
-  uart = serial:find_serial(0)
-  if uart == nil then
-    gcs:send_text(3, "G2P: no SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
+  -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
+  uart_gimbal = serial:find_serial(0)
+  uart_dv = serial:find_serial(1)
+  if uart_gimbal == nil or uart_dv == nil then
+    gcs:send_text(3, "G2P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
+    gcs:send_text(3, "G2P: first serial for gimbal, secon for camera") -- MAV_SEVERITY_ERR
   else
-    uart:begin(115200)
-    uart:set_flow_control(0)
+    uart_gimbal:begin(115200)
+    uart_gimbal:set_flow_control(0)
+    uart_dv:begin(115200)
+    uart_dv:set_flow_control(0)
     initialised = true
     gcs:send_text(MAV_SEVERITY.INFO, "G2P: started")
   end
@@ -156,7 +202,7 @@ end
 -- send hard coded message
 function send_msg(msg)
   for i=1,#msg do
-    uart:write(msg[i])
+    uart_gimbal:write(msg[i])
     -- debug
     bytes_written = bytes_written + 1
   end
@@ -171,10 +217,10 @@ end
 
 -- reading incoming packets from gimbal
 function read_incoming_packets()
-  local n_bytes = uart:available()
+  local n_bytes = uart_gimbal:available()
   while n_bytes > 0 do
     n_bytes = n_bytes - 1
-    parse_byte(uart:read())
+    parse_byte(uart_gimbal:read())
   end
 end
 
@@ -250,18 +296,22 @@ function parse_byte(b)
     end
 end
 
--- write a byte to the uart
-function write_bytes(buff,len)
+-- write a byte to the uart_gimbal
+function write_bytes(buff,len, uart)
   if #buff == 0 or #buff < len then
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: failed to write byte") -- MAV_SEVERITY_ERR
     return false
   end
 
-  local packet_string = "G2P packet send: "
+  local packet_string = "packet send at uart " .. uart .. ": "
 
   for i = 1, len, 1 do
     local byte_to_write = buff[i] & 0xFF
-    uart:write(byte_to_write)
+    if uart == 0 then
+      uart_gimbal:write(byte_to_write)
+    elseif uart == 1 then
+      uart_dv:write(byte_to_write)
+    end
     bytes_written = bytes_written + 1
     packet_string = packet_string .. byte_to_write .. " "
   end
@@ -272,6 +322,105 @@ function write_bytes(buff,len)
   
   return true
 end
+
+
+function send_GPS()
+  -- check GPS fix
+  if gps:status(GPS_INSTANCE) < 3 and G2P_DEBUG:get() < 3 then
+    -- wait for GPS fix
+    return false
+  end
+
+  -- calculate packet variables
+  local location = gps:location(GPS_INSTANCE)
+  local lat = location:lat() -- deg E7
+  local lng = location:lng() -- deg E7
+  local alt = location:alt() // 10 -- dm
+
+  -- debug packet, override with default datas
+  if G2P_DEBUG:get() > 2 then
+    lng = 1140384850
+    lat = 226384700
+    alt = 500
+  end
+
+  if G2P_DEBUG:get() > 1 then
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("Long: %d, Lat: %d, Alt: %d", lng, lat, alt))
+  end
+
+  -- define packets
+  local packet1 = {
+    DV_HEADER,
+    DV_HEADER2_SEND,
+    DV_CMD1,
+    DV_CMD2_LATH,
+    byte4(lat),
+    byte3(lat),
+    0,
+    0,
+    DV_END
+  }
+  local packet2 = {
+    DV_HEADER,
+    DV_HEADER2_SEND,
+    DV_CMD1,
+    DV_CMD2_LATL,
+    byte2(lat),
+    byte1(lat),
+    0,
+    0,
+    DV_END
+  }
+  local packet3 = {
+    DV_HEADER,
+    DV_HEADER2_SEND,
+    DV_CMD1,
+    DV_CMD2_LONH,
+    byte4(lng),
+    byte3(lng),
+    0,
+    0,
+    DV_END
+  }
+  local packet4 = {
+    DV_HEADER,
+    DV_HEADER2_SEND,
+    DV_CMD1,
+    DV_CMD2_LONL,
+    byte2(lng),
+    byte1(lng),
+    0,
+    0,
+    DV_END
+  }
+  local packet5 = {
+    DV_HEADER,
+    DV_HEADER2_SEND,
+    DV_CMD1,
+    DV_CMD2_ALT,
+    highbyte(alt),
+    lowbyte(alt),
+    0,
+    0,
+    DV_END
+  }
+
+  -- calculate checksums
+  packet1[7], packet1[8] = checksum_dv(packet1, #packet1)
+  packet2[7], packet2[8] = checksum_dv(packet2, #packet2)
+  packet3[7], packet3[8] = checksum_dv(packet3, #packet3)
+  packet4[7], packet4[8] = checksum_dv(packet4, #packet4)
+  packet5[7], packet5[8] = checksum_dv(packet5, #packet5)
+
+  -- send packet
+  write_bytes(packet1, #packet1, 1)
+  write_bytes(packet2, #packet2, 1)
+  write_bytes(packet3, #packet3, 1)
+  write_bytes(packet4, #packet4, 1)
+  write_bytes(packet5, #packet5, 1)
+  return true
+end
+
 
 -- send target angles (in degrees) to gimbal
 -- yaw_angle_deg is always a body-frame angle
@@ -295,12 +444,12 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
                           lowbyte(roll_angle_output),
                           highbyte(pitch_angle_output),
                           lowbyte(pitch_angle_output), 0, 0 }
-  local ck_a, ck_b = calc_checksum(packet_to_send, 9)
+  local ck_a, ck_b = checksum_mount(packet_to_send, 9)
   packet_to_send[10] = ck_a
   packet_to_send[11] = ck_b
 
   -- send packet
-  write_bytes(packet_to_send, 11)
+  write_bytes(packet_to_send, 11, 0)
 end
 
 -- the main update function
@@ -309,7 +458,7 @@ function update()
   -- get current system time
   local now_ms = millis()
 
-  -- initialise connection to gimbal
+  -- initialise connection to gimbal and dv
   if not initialised then
     init()
     return update, INIT_INTERVAL_MS
@@ -337,6 +486,12 @@ function update()
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
     return update, 2000
+  end
+
+  -- send GPS coordinates at 1 Hz
+  if now_ms - last_dv_ms > 1000 then
+    last_dv_ms = now_ms
+    send_GPS()
   end
 
   -- status reporting
