@@ -326,7 +326,7 @@ end
 
 function send_GPS()
   -- check GPS fix
-  if gps:status(GPS_INSTANCE) < 3 and G2P_DEBUG:get() < 3 then
+  if gps:status(GPS_INSTANCE) < 3 and G2P_DEBUG:get() ~= -1 then
     -- wait for GPS fix
     return false
   end
@@ -338,7 +338,7 @@ function send_GPS()
   local alt = location:alt() // 10 -- dm
 
   -- debug packet, override with default datas
-  if G2P_DEBUG:get() > 2 then
+  if G2P_DEBUG:get() == -1 then
     lng = 1140384850
     lat = 226384700
     alt = 500
