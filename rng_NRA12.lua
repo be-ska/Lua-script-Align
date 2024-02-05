@@ -68,10 +68,9 @@ end
 function read_incoming_bytes()
     local now = millis()
     local n_bytes = uart:available()
-    local packet_string = "packet received: "
     while n_bytes > 0 do
+        n_bytes = n_bytes-1
         local byte = uart:read()
-        packet_string = packet_string .. byte
         if parse_state == 0 then
             if byte == HEADER0 then
                 parse_state = 1
@@ -117,18 +116,9 @@ function read_incoming_bytes()
             if byte == END2 then
                 distance_received = true
                 distance_received_ms = now
-                if NRA_DEBUG:get() > 1 then
-                    count_rec = count_rec + 1
-                    gcs:send_text(MAV_SEVERITY.INFO, "Distance received: " .. count_rec)
-                end
             end
             parse_state = 0
         end
-        n_bytes = n_bytes-1
-    end
-
-    if NRA_DEBUG:get() > 2 then
-        gcs:send_text(MAV_SEVERITY.INFO, packet_string)
     end
 end
 
