@@ -31,23 +31,13 @@ local lua_rfnd_driver_found = false -- true if user has configured lua backend
 local parse_state = 0
 local distance = 0
 local distance_received = false
-local count_rec = 0
+local uart = nil
 local header_found_ms = 0
 local distance_received_ms = 0
 
 ---------------------------------- RFND DRIVER --------------------------------
 
-function init()
-    -- find and init first instance of SERIALx_PROTOCOL = 28 (Scripting)
-    uart = serial:find_serial(0)
-    if uart == nil then
-        gcs:send_text(MAV_SEVERITY.ERROR, "RFND: no SERIALx_PROTOCOL = 28")
-        return
-    else
-        uart:begin(UART_BAUD)
-        uart:set_flow_control(1)
-    end
-
+function init_rng()
     local sensor_count = rangefinder:num_sensors() -- number of sensors connected
     for j = 0, sensor_count - 1 do
         local device = rangefinder:get_backend(j)
@@ -55,13 +45,16 @@ function init()
             -- this is a lua driver
             lua_rfnd_driver_found = true
             lua_rfnd_backend = device
+            gcs:send_text(MAV_SEVERITY.INFO, "RFND: backend found")
         end
     end
+
     if not lua_rfnd_driver_found then
         -- We can't use this script if user hasn't setup a lua backend
         gcs:send_text(0, string.format("RFND: Configure RNGFNDx_TYPE = " .. PARAM_LUA_RFND))
+        return update, INIT_MILLIS
     else
-        gcs:send_text(MAV_SEVERITY.INFO, "RFND: started")
+        return update, NRA_UPDATE:get()
     end
 end
 
@@ -137,8 +130,23 @@ end
 
 function update()
     if not lua_rfnd_driver_found then
-        init()
-        return update, INIT_MILLIS
+        return init_rng, INIT_MILLIS
+    end
+
+    if uart == nil then
+        uart = serial:find_serial(0)
+        if uart == nil then
+            gcs:send_text(MAV_SEVERITY.ERROR, "RFND: configure SERIALx_PROTOCOL = 28")
+            return update, INIT_MILLIS
+        else
+            uart:begin(UART_BAUD)
+            uart:set_flow_control(0)
+            -- first flush the serial buffer
+            while uart:available()>0 do
+                uart:read()
+            end
+            gcs:send_text(MAV_SEVERITY.INFO, "RFND: succesfully started")
+        end
     end
 
     -- consume incoming bytes
@@ -161,4 +169,4 @@ function update()
 end
 
 -- start running update loop
-return update()
+return update, INIT_MILLIS
