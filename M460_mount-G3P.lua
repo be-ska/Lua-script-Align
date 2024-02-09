@@ -191,9 +191,9 @@ function init()
     gcs:send_text(3, "G2P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
   else
     uart_gimbal:begin(115200)
-    uart_gimbal:set_flow_control(2)
+    uart_gimbal:set_flow_control(0)
     uart_dv:begin(115200)
-    uart_dv:set_flow_control(2)
+    uart_dv:set_flow_control(0)
     initialised = true
     gcs:send_text(MAV_SEVERITY.INFO, "G2P: started")
   end
@@ -233,7 +233,7 @@ function parse_byte(b)
     if G2P_DEBUG:get() > 2 then
       debug_buff[#debug_buff+1] = b
       if #debug_buff >= 10 then
-        gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: %x %x %x %x %x %x %x %x %x %x", debug_buff[1], debug_buff[2], debug_buff[3], debug_buff[4], debug_buff[5], debug_buff[6], debug_buff[7], debug_buff[8], debug_buff[9], debug_buff[10]))
+        gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: %x %x %x %x %x %x %x %x %x %x", debug_buff[1], debug_buff[2], debug_buff[3], debug_buff[4], debug_buff[5], debug_buff[6], debug_buff[7], debug_buff[8], debug_buff[9], debug_buff[10]))
         debug_buff = {}
       end
     end
@@ -312,8 +312,6 @@ function write_bytes(buff,len, uart)
     elseif uart == 1 then
       uart_dv:write(byte_to_write)
     end
-    bytes_written = bytes_written + 1
-    packet_string = packet_string .. byte_to_write .. " "
   end
 
   if G2P_DEBUG:get() > 3 then
