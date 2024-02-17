@@ -33,6 +33,7 @@ local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
+local CAMERA_INSTANCE = 0               -- always use the first camera
 local GPS_INSTANCE = gps:primary_sensor()
 
 -- packet definitions for mount
@@ -51,6 +52,11 @@ local DV_CMD2_LATL = 0xA9
 local DV_CMD2_LONH = 0xAA
 local DV_CMD2_LONL = 0xAB
 local DV_CMD2_ALT = 0xAC
+local DV_CMD2_CAPTURE = 0xCE
+local DV_DATA1_CAPTURE = 0x06
+local DV_DATA2_CAPTURE = 0x20
+local DV_CRC1_CAPTURE = 0x01
+local DV_CRC2_CAPTURE = 0x95
 local DV_END = 0xEA
 
 -- parsing state definitions
@@ -77,6 +83,7 @@ local parse_data_bytes_recv = 0         -- count of the number of bytes received
 local roll = 0
 local pitch = 0
 local yaw = 0
+local cam_pic_count = 0
 
 -- parsing status reporting variables
 local last_print_ms = 0                 -- system time that debug output was last printed
@@ -450,6 +457,31 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   write_bytes(packet_to_send, 11, 0)
 end
 
+function check_picture()
+  -- get latest state from AP driver
+  local pic_count, rec_video, zoom_step, focus_step, auto_focus = mount:get_camera_state(MOUNT_INSTANCE)
+
+  -- check for take picture
+  if pic_count and pic_count ~= cam_pic_count then
+    cam_pic_count = pic_count
+    local packet = {
+      DV_HEADER,
+      DV_HEADER2_SEND,
+      DV_CMD1,
+      DV_CMD2_CAPTURE,
+      DV_DATA1_CAPTURE,
+      DV_DATA2_CAPTURE,
+      DV_CRC1_CAPTURE,
+      DV_CRC2_CAPTURE,
+      DV_END
+    }
+    write_bytes(packet, #packet, 1)
+    if G2P_DEBUG:get() > 0 then
+      gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: took pic %u", cam_pic_count))
+    end
+  end
+end
+
 -- the main update function
 function update()
 
@@ -462,11 +494,9 @@ function update()
     return update, INIT_INTERVAL_MS
   end
 
-   -- send GPS coordinates at 1 Hz
-   if now_ms - last_dv_ms > 1000 then
-    last_dv_ms = now_ms
-    send_GPS()
-  end
+   -- send GPS coordinates
+  send_GPS()
+  check_picture()
 
   -- consume incoming bytes
   read_incoming_packets()
