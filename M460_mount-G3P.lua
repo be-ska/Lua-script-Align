@@ -39,6 +39,11 @@ local GPS_INSTANCE = gps:primary_sensor()
 -- packet definitions for mount
 local HEADER_SEND = 0x18                    -- 1st header byte
 local HEADER_RECEIVE = 0x19                 -- 2nd header byte
+local MOUNT_CMD_PARAM_SET      = 0x01
+local MOUNT_CMD_PARAM_GET      = 0x02
+local MOUNT_CMD_ANGLE_SET      = 0x03
+local MOUNT_CMD_CALIBRATE      = 0x04
+local MOUNT_CMD_ANGLE_REQUEST  = 0x05
 local PACKET_LENGTH_MIN = 6             -- serial packet minimum length.  used for sanity checks
 local PACKET_LENGTH_MAX = 88            -- serial packet maximum length.  used for sanity checks
 
@@ -66,10 +71,7 @@ local PARSE_STATE_WAITING_FOR_LENGTH    = 2
 local PARSE_STATE_WAITING_FOR_DATA      = 3
 
 -- G2P Operation Bytes
-local MOUNT_CMD_PARAM_SET      = 0x01
-local MOUNT_CMD_PARAM_GET      = 0x02
-local MOUNT_CMD_ANGLE_SET      = 0x03
-local MOUNT_CMD_CALIBRATE      = 0x04
+
 
 
 -- local variables and definitions
@@ -86,6 +88,7 @@ local yaw = 0
 local cam_pic_count = 0
 
 -- parsing status reporting variables
+local parse_data_buff = {}
 local last_print_ms = 0                 -- system time that debug output was last printed
 local bytes_read = 0                    -- number of bytes read from gimbal
 local bytes_written = 0                 -- number of bytes written to gimbal
@@ -95,6 +98,8 @@ local msg_ignored = 0                   -- number of ignored messages (because f
 -- debug variables
 local debug_count = 0              -- system time that a test message was last sent
 local debug_buff = {}                   -- debug buffer to display bytes from gimbal
+
+local test_count = 0
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -206,28 +211,17 @@ function init()
   end
 end
 
--- send hard coded message
-function send_msg(msg)
-  for i=1,#msg do
-    uart_gimbal:write(msg[i])
-    -- debug
-    bytes_written = bytes_written + 1
-  end
-end
-
--- parse test message
-function parse_test_msg(msg)
-  for i=1,#msg do
-    parse_byte(msg[i])
-  end
-end
-
 -- reading incoming packets from gimbal
 function read_incoming_packets()
   local n_bytes = uart_gimbal:available()
-  while n_bytes > 0 do
-    n_bytes = n_bytes - 1
-    parse_byte(uart_gimbal:read())
+  if n_bytes > 0 then
+    local buffer = "G3P: packet received: "
+    while n_bytes > 0 do
+      n_bytes = n_bytes - 1
+      buffer = buffer .. string.format("%x ", uart_gimbal:read())
+      --parse_byte(uart_gimbal:read())
+    end
+    gcs:send_text(MAV_SEVERITY.ERROR, buffer)
   end
 end
 
@@ -237,7 +231,7 @@ function parse_byte(b)
     bytes_read = bytes_read + 1
 
     -- debug
-    if G2P_DEBUG:get() > 2 then
+    if G2P_DEBUG:get() == -1 then
       debug_buff[#debug_buff+1] = b
       if #debug_buff >= 10 then
         gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: %x %x %x %x %x %x %x %x %x %x", debug_buff[1], debug_buff[2], debug_buff[3], debug_buff[4], debug_buff[5], debug_buff[6], debug_buff[7], debug_buff[8], debug_buff[9], debug_buff[10]))
@@ -452,7 +446,6 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   local ck_a, ck_b = checksum_mount(packet_to_send, 9)
   packet_to_send[10] = ck_a
   packet_to_send[11] = ck_b
-
   -- send packet
   write_bytes(packet_to_send, 11, 0)
 end
@@ -482,6 +475,21 @@ function check_picture()
   end
 end
 
+function request_angles()
+  local packet = {
+    HEADER_SEND,
+    MOUNT_CMD_ANGLE_REQUEST,
+    0x00,
+    0x05,
+    0x0A
+  }
+  --local ck_a, ck_b = checksum_mount(packet, 3)
+  --packet[4] = ck_a
+  --packet[5] = ck_b
+  gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: send angle request: %x %x %x %x %x", packet[1], packet[2], packet[3], packet[4], packet[5]))
+  write_bytes(packet, #packet, 0)
+end
+
 -- the main update function
 function update()
 
@@ -500,6 +508,13 @@ function update()
 
   -- consume incoming bytes
   read_incoming_packets()
+
+  -- ask for gimbal angles
+  test_count = test_count + 1
+  if (test_count > 50) then
+    test_count = 0
+    request_angles()
+  end
 
   -- send target angle to gimbal
   local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
