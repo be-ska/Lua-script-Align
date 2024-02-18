@@ -44,6 +44,7 @@ local MOUNT_CMD_PARAM_GET      = 0x02
 local MOUNT_CMD_ANGLE_SET      = 0x03
 local MOUNT_CMD_CALIBRATE      = 0x04
 local MOUNT_CMD_ANGLE_REQUEST  = 0x05
+local MOUNT_LENGTH_ANGLE_REQUEST = 0x06
 local PACKET_LENGTH_MIN = 6             -- serial packet minimum length.  used for sanity checks
 local PACKET_LENGTH_MAX = 88            -- serial packet maximum length.  used for sanity checks
 
@@ -86,6 +87,7 @@ local roll = 0
 local pitch = 0
 local yaw = 0
 local cam_pic_count = 0
+local mount_buff = {}
 
 -- parsing status reporting variables
 local parse_data_buff = {}
@@ -202,9 +204,9 @@ function init()
     gcs:send_text(3, "G2P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
     gcs:send_text(3, "G2P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
   else
-    uart_gimbal:begin(115200)
+    uart_gimbal:begin(uint32_t(120000))
     uart_gimbal:set_flow_control(0)
-    uart_dv:begin(115200)
+    uart_dv:begin(uint32_t(115200))
     uart_dv:set_flow_control(0)
     initialised = true
     gcs:send_text(MAV_SEVERITY.INFO, "G2P: started")
@@ -214,87 +216,25 @@ end
 -- reading incoming packets from gimbal
 function read_incoming_packets()
   local n_bytes = uart_gimbal:available()
-  if n_bytes > 0 then
-    local buffer = "G3P: packet received: "
-    while n_bytes > 0 do
-      n_bytes = n_bytes - 1
-      buffer = buffer .. string.format("%x ", uart_gimbal:read())
-      --parse_byte(uart_gimbal:read())
+  while n_bytes > 0 do
+    n_bytes = n_bytes - 1
+    mount_buff[#mount_buff+1] = uart_gimbal:read()
+  end
+  if #mount_buff >= 11 then
+    for i = 1, #mount_buff-10, 1 do
+      if mount_buff[i] == HEADER_RECEIVE then
+        parse_bytes(i)
+        gcs:send_text(MAV_SEVERITY.ERROR, string.format("Header found, time to parse %d bytes!", #mount_buff)) -- MAV_SEVERITY_ERR
+        -- TODO: move to parse bytes
+        mount_buff = {}
+        break
+      end
     end
-    gcs:send_text(MAV_SEVERITY.ERROR, buffer)
   end
 end
 
--- parse a single byte from gimbal
-function parse_byte(b)
-    -- record num bytes for reporting
-    bytes_read = bytes_read + 1
-
-    -- debug
-    if G2P_DEBUG:get() == -1 then
-      debug_buff[#debug_buff+1] = b
-      if #debug_buff >= 10 then
-        gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: %x %x %x %x %x %x %x %x %x %x", debug_buff[1], debug_buff[2], debug_buff[3], debug_buff[4], debug_buff[5], debug_buff[6], debug_buff[7], debug_buff[8], debug_buff[9], debug_buff[10]))
-        debug_buff = {}
-      end
-    end
-
-    -- waiting for header
-    if parse_state == PARSE_STATE_WAITING_FOR_HEADER then
-      if b == HEADER_RECEIVE then
-        parse_state = PARSE_STATE_WAITING_FOR_OPERATION
-        parse_data_bytes_recv = 1
-        parse_data_buff[parse_data_bytes_recv] = b
-        do return end
-      end
-      bytes_error = bytes_error + 1
-    end
-
-    -- waiting for operation
-    if parse_state == PARSE_STATE_WAITING_FOR_OPERATION then
-      if b == MOUNT_CMD_PARAM_SET or MOUNT_CMD_PARAM_GET or MOUNT_CMD_CALIBRATE then
-        parse_state = PARSE_STATE_WAITING_FOR_LENGTH
-        parse_operation = b
-        parse_data_bytes_recv = parse_data_bytes_recv + 1
-        parse_data_buff[parse_data_bytes_recv] = b
-        
-      else
-        -- unexpected byte so reset parsing state
-        parse_state = PARSE_STATE_WAITING_FOR_HEADER
-        bytes_error = bytes_error + 1
-      end
-      do return end
-    end
-
-    -- waiting for length
-    if parse_state == PARSE_STATE_WAITING_FOR_LENGTH then
-      parse_length = b
-      if parse_length >= PACKET_LENGTH_MIN and parse_length <= PACKET_LENGTH_MAX then
-        parse_state = PARSE_STATE_WAITING_FOR_DATA
-        parse_data_bytes_recv = parse_data_bytes_recv + 1
-        parse_data_buff[parse_data_bytes_recv] = b
-      else
-        -- unexpected length
-        parse_state = PARSE_STATE_WAITING_FOR_HEADER
-        bytes_error = bytes_error + 1
-        if G2P_DEBUG:get() > 0 then
-          gcs:send_text(MAV_SEVERITY.ERROR, string.format("G2P: invalid len:%d", parse_length))
-        end
-      end
-      do return end
-    end
-
-    -- waiting for data
-    if parse_state == PARSE_STATE_WAITING_FOR_DATA then
-      --TODO: receive payload bytes until length is 0
-      parse_length = parse_length - 1
-      parse_data_bytes_recv = parse_data_bytes_recv + 1
-      parse_data_buff[parse_data_bytes_recv] = b
-      if parse_length == 0 then
-        --TODO: check checksum and do actions
-        parse_state = PARSE_STATE_WAITING_FOR_HEADER
-      end
-    end
+function parse_bytes(start)
+  
 end
 
 -- write a byte to the uart_gimbal
@@ -483,10 +423,6 @@ function request_angles()
     0x05,
     0x0A
   }
-  --local ck_a, ck_b = checksum_mount(packet, 3)
-  --packet[4] = ck_a
-  --packet[5] = ck_b
-  gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: send angle request: %x %x %x %x %x", packet[1], packet[2], packet[3], packet[4], packet[5]))
   write_bytes(packet, #packet, 0)
 end
 
@@ -527,10 +463,10 @@ function update()
     roll = roll_degs
     pitch = pitch_degs
     yaw = yaw_degs
-    send_target_angles(pitch, roll, yaw)
+     send_target_angles(pitch, roll, yaw)
     
     -- TODO: need to send this with real angles
-    mount:set_attitude_euler(MOUNT_INSTANCE, roll, pitch, yaw)
+     mount:set_attitude_euler(MOUNT_INSTANCE, roll, pitch, yaw)
 
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
