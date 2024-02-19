@@ -48,6 +48,10 @@ local MOUNT_LENGTH_ANGLE_REQUEST = 0x06
 local PACKET_LENGTH_MIN = 6             -- serial packet minimum length.  used for sanity checks
 local PACKET_LENGTH_MAX = 88            -- serial packet maximum length.  used for sanity checks
 
+-- mount mode
+local MOUNT_MODE_RETRACT = 0
+local MOUNT_MODE_NEUTRAL = 1
+
 -- definitions for dv
 local DV_HEADER = 0xAE
 local DV_HEADER2_SEND = 0xA1
@@ -489,9 +493,14 @@ function update()
   end
 
   -- send target angle to gimbal
+  local mount_mode = mount:get_mode(MOUNT_INSTANCE)
   local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local roll_degs, pitch_degs, yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
-  if roll_deg and pitch_deg and yaw_deg then
+  
+  if mount_mode == MOUNT_MODE_NEUTRAL then
+    center_gimbal()
+
+  elseif roll_deg and pitch_deg and yaw_deg then
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: set MNT1_RC_RATE parameter")
     return update, 2000
 
