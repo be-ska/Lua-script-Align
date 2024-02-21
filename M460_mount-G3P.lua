@@ -17,11 +17,13 @@ assert(param:add_table(PARAM_TABLE_KEY, "G3P_", 5), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G3P_DEBUG param")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G3P_MS param")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G3P_CENTER_CH param")
+assert(param:add_param(PARAM_TABLE_KEY, 4, "RC_EXPO", 2), "could not add G3P_CENTER_CH param")
 
 -- bind parameters to variables
 local G3P_DEBUG = Parameter("G3P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
 local G3P_MS = Parameter("G3P_MS")  -- update milliseconds
 local G3P_CENTER_CH = Parameter("G3P_CENTER_CH")  -- update milliseconds
+local G3P_RC_EXPO = Parameter("G3P_RC_EXPO")
 
 -- MNT parametrs
 local MNT1_TYPE = Parameter("MNT1_TYPE")
@@ -31,6 +33,7 @@ local MNT1_ROLL_MAX = Parameter("MNT1_ROLL_MAX")
 local MNT1_ROLL_MIN = Parameter("MNT1_ROLL_MIN")
 local MNT1_YAW_MAX = Parameter("MNT1_YAW_MAX")
 local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
+local MNT1_RC_RATE = Parameter("MNT1_RC_RATE")
 local CAM1_TYPE = Parameter("CAM1_TYPE")
 
 -- global definitions
@@ -39,6 +42,7 @@ local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at t
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 local GPS_INSTANCE = gps:primary_sensor()
 local MOUNT_RC_CENTER = 9
+local MOUNT_RC_RATE = 30
 
 -- packet definitions for mount
 local HEADER_SEND = 0x18                    -- 1st header byte
@@ -78,7 +82,6 @@ local yaw_deg = 0
 local roll_deg = 0
 local pitch_deg = 0
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
-local debug_count = 0              -- system time that a test message was last sent
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -179,6 +182,14 @@ function init()
     do return end
   end
 
+  local rc_rate = MNT1_RC_RATE:get()
+  if rc_rate == nil or rc_rate <= 5 then
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_RC_RATE > 5")    
+    do return end
+  else
+    MOUNT_RC_RATE = rc_rate
+  end
+
   local center_rc = G3P_CENTER_CH:get()
   if center_rc == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set G3P_CENTER_CH with RC centering channel")
@@ -201,6 +212,21 @@ function init()
     initialised = true
     gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
   end
+end
+
+function expo(input)
+  -- Normalize input to a 0-1 range and check sign
+  local input_negative = input < 0
+  local normalized_input = input / MOUNT_RC_RATE
+
+  -- Exponential function with adjustable base and exponent
+  local output = normalized_input^G3P_RC_EXPO:get() * MOUNT_RC_RATE
+
+  -- Scale output back to the desired 0-30 range and mantain sign
+  if input_negative then
+    output = -output
+  end
+  return output
 end
 
 -- reading incoming packets from gimbal
@@ -382,9 +408,9 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   end
 
   -- convert angles from deg to G3P protocol
-  local roll_angle_output = math.floor(roll_angle_deg * 182.0444 + 0.5)
-  local pitch_angle_output = math.floor(pitch_angle_deg * 182.0444 + 0.5)
-  local yaw_angle_output = math.floor(yaw_angle_deg * 182.0444 + 0.5)
+  local roll_angle_output = math.floor(expo(roll_angle_deg) * 182.0444 + 0.5)
+  local pitch_angle_output = math.floor(expo(pitch_angle_deg) * 182.0444 + 0.5)
+  local yaw_angle_output = math.floor(expo(yaw_angle_deg) * 182.0444 + 0.5)
 
   -- create packet
   local packet_to_send = {HEADER_SEND,
