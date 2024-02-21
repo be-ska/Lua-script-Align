@@ -1,4 +1,4 @@
--- mount-G2P-driver.lua: Align G2P mount/gimbal driver
+-- mount-G3P-driver.lua: Align G3P mount/gimbal driver
 
 --[[
   How to use
@@ -7,21 +7,21 @@
     Set SCR_ENABLE = 1 to enable scripting and reboot the autopilot
     Set MNT1_TYPE = 9 (Scripting) to enable the mount/gimbal scripting driver
     Set MNT1_RC_RATE = 60 to use gimbal speed mode
+    Set CAM1_TYPE = 4 (Mount)
     Copy this script to the autopilot's SD card in the APM/scripts directory and reboot the autopilot
 --]]
 
 -- parameters
-local PARAM_TABLE_KEY = 40
-assert(param:add_table(PARAM_TABLE_KEY, "G2P_", 5), "could not add param table")
-assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G2P_DEBUG param")
-assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G2P_DEBUG param")
-assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G2P_DEBUG param")
-
+local PARAM_TABLE_KEY = 41
+assert(param:add_table(PARAM_TABLE_KEY, "G3P_", 5), "could not add param table")
+assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G3P_DEBUG param")
+assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G3P_MS param")
+assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G3P_CENTER_CH param")
 
 -- bind parameters to variables
-local G2P_DEBUG = Parameter("G2P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
-local G2P_MS = Parameter("G2P_MS")  -- update milliseconds
-local G2P_CENTER_CH = Parameter("G2P_CENTER_CH")  -- update milliseconds
+local G3P_DEBUG = Parameter("G3P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
+local G3P_MS = Parameter("G3P_MS")  -- update milliseconds
+local G3P_CENTER_CH = Parameter("G3P_CENTER_CH")  -- update milliseconds
 
 -- MNT parametrs
 local MNT1_TYPE = Parameter("MNT1_TYPE")
@@ -31,12 +31,12 @@ local MNT1_ROLL_MAX = Parameter("MNT1_ROLL_MAX")
 local MNT1_ROLL_MIN = Parameter("MNT1_ROLL_MIN")
 local MNT1_YAW_MAX = Parameter("MNT1_YAW_MAX")
 local MNT1_YAW_MIN = Parameter("MNT1_YAW_MIN")
+local CAM1_TYPE = Parameter("CAM1_TYPE")
 
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
 local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
-local CAMERA_INSTANCE = 0               -- always use the first camera
 local GPS_INSTANCE = gps:primary_sensor()
 local MOUNT_RC_CENTER = 9
 
@@ -67,45 +67,18 @@ local DV_CRC1_CAPTURE = 0x01
 local DV_CRC2_CAPTURE = 0x95
 local DV_END = 0xEA
 
--- parsing state definitions
-local PARSE_STATE_WAITING_FOR_HEADER    = 0
-local PARSE_STATE_WAITING_FOR_OPERATION = 1
-local PARSE_STATE_WAITING_FOR_LENGTH    = 2
-local PARSE_STATE_WAITING_FOR_DATA      = 3
-
--- G2P Operation Bytes
-
-
-
 -- local variables and definitions
 local uart_gimbal                       -- uart object connected to mount
 local uart_dv                           -- uart object connected to camera
-local last_dv_ms = 0
 local initialised = false               -- true once connection to gimbal has been initialised
-local parse_state = PARSE_STATE_WAITING_FOR_HEADER -- parse state
-local parse_length = 0                  -- incoming message parsed length
-local parse_data_bytes_recv = 0         -- count of the number of bytes received in the message so far
 local cam_pic_count = 0
 local mount_buff = {}
-local mount_is_centering = false
 local mount_center_switch = false
 local yaw_deg = 0
 local roll_deg = 0
 local pitch_deg = 0
-
--- parsing status reporting variables
-local parse_data_buff = {}
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
-local bytes_read = 0                    -- number of bytes read from gimbal
-local bytes_written = 0                 -- number of bytes written to gimbal
-local bytes_error = 0                   -- number of bytes read that could not be parsed
-local msg_ignored = 0                   -- number of ignored messages (because frame id does not match)
-
--- debug variables
 local debug_count = 0              -- system time that a test message was last sent
-local debug_buff = {}                   -- debug buffer to display bytes from gimbal
-
-local test_count = 0
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -192,18 +165,23 @@ end
 function init()
   -- check mount parameter
   if MNT1_TYPE:get() ~= 9 then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: set MNT1_TYPE=9")
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_TYPE=9")
+    do return end
+  end
+
+  if CAM1_TYPE:get() ~= 4 then
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set CAM1_TYPE=4")
     do return end
   end
 
   if MNT1_PITCH_MAX:get() == nil or MNT1_PITCH_MIN:get() == nil or MNT1_ROLL_MAX:get() == nil or MNT1_ROLL_MIN:get() == nil or MNT1_YAW_MAX:get() == nil or MNT1_YAW_MIN:get() == nil then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: check MNT1_ parameters")    
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: check MNT1_ parameters")    
     do return end
   end
 
-  local center_rc = G2P_CENTER_CH:get()
+  local center_rc = G3P_CENTER_CH:get()
   if center_rc == nil then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: set G2P_CENTER_CH with RC centering channel")
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set G3P_CENTER_CH with RC centering channel")
     do return end
   else
     MOUNT_RC_CENTER = center_rc
@@ -213,15 +191,15 @@ function init()
   uart_gimbal = serial:find_serial(0)
   uart_dv = serial:find_serial(1)
   if uart_gimbal == nil or uart_dv == nil then
-    gcs:send_text(3, "G2P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
-    gcs:send_text(3, "G2P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
+    gcs:send_text(3, "G3P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
+    gcs:send_text(3, "G3P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
   else
     uart_gimbal:begin(uint32_t(120000))
     uart_gimbal:set_flow_control(0)
     uart_dv:begin(uint32_t(115200))
     uart_dv:set_flow_control(0)
     initialised = true
-    gcs:send_text(MAV_SEVERITY.INFO, "G2P: started")
+    gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
   end
 end
 
@@ -275,7 +253,7 @@ end
 -- write a byte to the uart_gimbal
 function write_bytes(buff,len, uart)
   if #buff == 0 or #buff < len then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G2P: failed to write byte") -- MAV_SEVERITY_ERR
+    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: failed to write byte") -- MAV_SEVERITY_ERR
     return false
   end
 
@@ -290,7 +268,7 @@ function write_bytes(buff,len, uart)
     end
   end
 
-  if G2P_DEBUG:get() > 3 then
+  if G3P_DEBUG:get() > 3 then
     gcs:send_text(MAV_SEVERITY.INFO, packet_string)
   end
   
@@ -300,7 +278,7 @@ end
 
 function send_GPS()
   -- check GPS fix
-  if gps:status(GPS_INSTANCE) < 3 and G2P_DEBUG:get() ~= -1 then
+  if gps:status(GPS_INSTANCE) < 3 and G3P_DEBUG:get() ~= -1 then
     -- wait for GPS fix
     return false
   end
@@ -312,13 +290,13 @@ function send_GPS()
   local alt = location:alt() // 10 -- dm
 
   -- debug packet, override with default datas
-  if G2P_DEBUG:get() == -1 then
+  if G3P_DEBUG:get() == -1 then
     lng = 1140384850
     lat = 226384700
     alt = 500
   end
 
-  if G2P_DEBUG:get() > 1 then
+  if G3P_DEBUG:get() > 1 then
     gcs:send_text(MAV_SEVERITY.INFO, string.format("Long: %d, Lat: %d, Alt: %d", lng, lat, alt))
   end
 
@@ -399,11 +377,11 @@ end
 -- send target angles (in degrees) to gimbal
 -- yaw_angle_deg is always a body-frame angle
 function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
-  if G2P_DEBUG:get() > 1 then
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P send angles P: %f R: %f Y; %f", pitch_angle_deg, roll_angle_deg, yaw_angle_deg))
+  if G3P_DEBUG:get() > 1 then
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P send angles P: %f R: %f Y; %f", pitch_angle_deg, roll_angle_deg, yaw_angle_deg))
   end
 
-  -- convert angles from deg to G2P protocol
+  -- convert angles from deg to G3P protocol
   local roll_angle_output = math.floor(roll_angle_deg * 182.0444 + 0.5)
   local pitch_angle_output = math.floor(pitch_angle_deg * 182.0444 + 0.5)
   local yaw_angle_output = math.floor(yaw_angle_deg * 182.0444 + 0.5)
@@ -417,7 +395,9 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
                           highbyte(roll_angle_output),
                           lowbyte(roll_angle_output),
                           highbyte(pitch_angle_output),
-                          lowbyte(pitch_angle_output), 0, 0 }
+                          lowbyte(pitch_angle_output),
+                          0,
+                          0 }
   local ck_a, ck_b = checksum_mount(packet_to_send, #packet_to_send)
   packet_to_send[10] = ck_a
   packet_to_send[11] = ck_b
@@ -444,7 +424,7 @@ function check_picture()
       DV_END
     }
     write_bytes(packet, #packet, 1)
-    if G2P_DEBUG:get() > 0 then
+    if G3P_DEBUG:get() > 0 then
       gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: took pic %u", cam_pic_count))
     end
   end
@@ -522,29 +502,34 @@ function update()
     center_gimbal()
 
   elseif des_roll_deg and des_pitch_deg and des_yaw_deg then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G2P: set MNT1_RC_RATE parameter")
+    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: set MNT1_RC_RATE parameter")
     return update, 2000
 
   elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
      send_target_angles(des_pitch_degs, des_roll_degs, des_yaw_degs)
 
   else
-    gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
+    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get target angles")
     return update, 2000
   end
 
   -- check if centered
   check_centering()
 
+  if des_roll_degs == nil or des_pitch_degs == nil or des_yaw_degs == nil then
+    des_roll_degs = 0
+    des_pitch_degs = 0
+    des_yaw_degs = 0
+  end
+
   -- status reporting
-  debug_count = debug_count + 1
-  if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
+  if (G3P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
     last_print_ms = now_ms
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, angle: R = %f, P = %f, Y = %f", debug_count//5, roll_deg, pitch_deg, yaw_deg))
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P angle: R = %f P = %f Y = %f, speed: R = %f P = %f Y = %f", roll_deg, pitch_deg, yaw_deg, des_roll_degs, des_pitch_degs, des_yaw_degs))
     debug_count = 0
   end
 
-  return update, G2P_MS:get()
+  return update, G3P_MS:get()
 end
 
 return update()
