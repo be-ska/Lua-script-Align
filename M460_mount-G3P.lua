@@ -43,6 +43,7 @@ local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 local GPS_INSTANCE = gps:primary_sensor()
 local MOUNT_RC_CENTER = 9
 local MOUNT_RC_RATE = 30
+local MOUNT_RC_EXPO = 1
 
 -- packet definitions for mount
 local HEADER_SEND = 0x18                    -- 1st header byte
@@ -198,6 +199,18 @@ function init()
     MOUNT_RC_CENTER = center_rc
   end
 
+  local expo_rc = G3P_RC_EXPO:get()
+  if expo_rc == nil or expo_rc > 4 then
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: G3P_RC_EXPO out of range")
+    do return end
+  elseif expo_rc < 1 then
+    -- do not allow negative exponents
+    MOUNT_RC_EXPO = 1
+  else
+    -- Lua support only integer exponents
+    MOUNT_RC_EXPO = math.floor(expo_rc + 0.5)
+  end
+
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
   uart_dv = serial:find_serial(1)
@@ -217,10 +230,10 @@ end
 function expo(input)
   -- Normalize input to a 0-1 range and check sign
   local input_negative = input < 0
-  local normalized_input = input / MOUNT_RC_RATE
+  local normalized_input = math.abs(input / MOUNT_RC_RATE)
 
   -- Exponential function with adjustable base and exponent
-  local output = normalized_input^G3P_RC_EXPO:get() * MOUNT_RC_RATE
+  local output = normalized_input^MOUNT_RC_EXPO * MOUNT_RC_RATE
 
   -- Scale output back to the desired 0-30 range and mantain sign
   if input_negative then
