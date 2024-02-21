@@ -15,13 +15,16 @@ local PARAM_TABLE_KEY = 40
 assert(param:add_table(PARAM_TABLE_KEY, "G2P_", 5), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G2P_DEBUG param")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G2P_DEBUG param")
+assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G2P_DEBUG param")
+
 
 -- bind parameters to variables
-local MNT1_TYPE = Parameter("MNT1_TYPE")    -- should be 9:Scripting
 local G2P_DEBUG = Parameter("G2P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
 local G2P_MS = Parameter("G2P_MS")  -- update milliseconds
+local G2P_CENTER_CH = Parameter("G2P_CENTER_CH")  -- update milliseconds
 
 -- MNT parametrs
+local MNT1_TYPE = Parameter("MNT1_TYPE")
 local MNT1_PITCH_MAX = Parameter("MNT1_PITCH_MAX")
 local MNT1_PITCH_MIN = Parameter("MNT1_PITCH_MIN")
 local MNT1_ROLL_MAX = Parameter("MNT1_ROLL_MAX")
@@ -35,6 +38,7 @@ local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at t
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 local CAMERA_INSTANCE = 0               -- always use the first camera
 local GPS_INSTANCE = gps:primary_sensor()
+local MOUNT_RC_CENTER = 9
 
 -- packet definitions for mount
 local HEADER_SEND = 0x18                    -- 1st header byte
@@ -45,12 +49,6 @@ local MOUNT_CMD_ANGLE_SET      = 0x03
 local MOUNT_CMD_CALIBRATE      = 0x04
 local MOUNT_CMD_ANGLE_REQUEST  = 0x05
 local MOUNT_LENGTH_ANGLE_REQUEST = 0x06
-local PACKET_LENGTH_MIN = 6             -- serial packet minimum length.  used for sanity checks
-local PACKET_LENGTH_MAX = 88            -- serial packet maximum length.  used for sanity checks
-
--- mount mode
-local MOUNT_MODE_RETRACT = 0
-local MOUNT_MODE_NEUTRAL = 1
 
 -- definitions for dv
 local DV_HEADER = 0xAE
@@ -89,6 +87,11 @@ local parse_length = 0                  -- incoming message parsed length
 local parse_data_bytes_recv = 0         -- count of the number of bytes received in the message so far
 local cam_pic_count = 0
 local mount_buff = {}
+local mount_is_centering = false
+local mount_center_switch = false
+local yaw_deg = 0
+local roll_deg = 0
+local pitch_deg = 0
 
 -- parsing status reporting variables
 local parse_data_buff = {}
@@ -198,6 +201,14 @@ function init()
     do return end
   end
 
+  local center_rc = G2P_CENTER_CH:get()
+  if center_rc == nil then
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G2P: set G2P_CENTER_CH with RC centering channel")
+    do return end
+  else
+    MOUNT_RC_CENTER = center_rc
+  end
+
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
   uart_dv = serial:find_serial(1)
@@ -246,9 +257,9 @@ function parse_bytes(start)
       local ck_a, ck_b = checksum_mount(buffer, #buffer)
       if ck_a == buffer[10] and ck_b == buffer[11] then
         -- checksum ok, send angles to mount
-        local yaw_deg = int16_value(buffer[4], buffer[5])/182.0444
-        local roll_deg = int16_value(buffer[6], buffer[7])/182.0444
-        local pitch_deg = int16_value(buffer[8], buffer[9])/182.0444
+        yaw_deg = int16_value(buffer[4], buffer[5])/182.0444
+        roll_deg = int16_value(buffer[6], buffer[7])/182.0444
+        pitch_deg = int16_value(buffer[8], buffer[9])/182.0444
         mount:set_attitude_euler(MOUNT_INSTANCE, roll_deg, pitch_deg, yaw_deg)
       else
         gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CHECKSUM") -- MAV_SEVERITY_ERR
@@ -465,6 +476,21 @@ function center_gimbal()
   write_bytes(packet, #packet, 0)
 end
 
+function check_centering()
+  if mount_center_switch then
+    if rc:get_pwm(MOUNT_RC_CENTER) < 1200 then
+      mount_center_switch = false
+      return true
+    end
+  else
+    if rc:get_pwm(MOUNT_RC_CENTER) > 1800 then
+      mount_center_switch = true
+      return true
+    end
+  end
+  return false
+end
+
 -- the main update function
 function update()
 
@@ -479,6 +505,7 @@ function update()
 
    -- send GPS coordinates
   send_GPS()
+
   check_picture()
 
   -- consume incoming bytes
@@ -488,30 +515,32 @@ function update()
   request_angles()
 
   -- send target angle to gimbal
-  local mount_mode = mount:get_mode(MOUNT_INSTANCE)
-  local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
-  local roll_degs, pitch_degs, yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
+  local des_roll_deg, des_pitch_deg, des_yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
+  local des_roll_degs, des_pitch_degs, des_yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
 
-  if mount_mode == MOUNT_MODE_NEUTRAL then
+  if check_centering() then
     center_gimbal()
 
-  elseif roll_deg and pitch_deg and yaw_deg then
+  elseif des_roll_deg and des_pitch_deg and des_yaw_deg then
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: set MNT1_RC_RATE parameter")
     return update, 2000
 
-  elseif roll_degs and pitch_degs and yaw_degs then
-     send_target_angles(pitch_degs, roll_degs, yaw_degs)
+  elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
+     send_target_angles(des_pitch_degs, des_roll_degs, des_yaw_degs)
 
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G2P: can't get target angles")
     return update, 2000
   end
 
+  -- check if centered
+  check_centering()
+
   -- status reporting
   debug_count = debug_count + 1
   if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
     last_print_ms = now_ms
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, last angle sent: R = %f, P = %f, Y = %f", debug_count//5, roll_degs, pitch_degs, yaw_degs))
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, angle: R = %f, P = %f, Y = %f", debug_count//5, roll_deg, pitch_deg, yaw_deg))
     debug_count = 0
   end
 
