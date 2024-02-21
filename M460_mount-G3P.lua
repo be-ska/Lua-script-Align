@@ -552,9 +552,6 @@ function update()
     return update, 2000
   end
 
-  -- check if centered
-  check_centering()
-
   if des_roll_degs == nil or des_pitch_degs == nil or des_yaw_degs == nil then
     des_roll_degs = 0
     des_pitch_degs = 0
