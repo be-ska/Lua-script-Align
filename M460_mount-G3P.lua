@@ -172,11 +172,11 @@ end
 function checksum_mount(packet, len)
   local ck_a = 0;
   local ck_b = 0;
-  for i = 2, len, 1 do
+  for i = 2, len-2, 1 do
     ck_a = ck_a + packet[i];
     ck_b = ck_b + ck_a;
   end
-  return ck_a, ck_b
+  return lowbyte(ck_a), lowbyte(ck_b)
 end
 function checksum_dv(packet, len)
   local ck = packet[2] + packet[3] + packet[4] + packet[5] + packet[6];
@@ -225,8 +225,6 @@ function read_incoming_packets()
     for i = 1, #mount_buff-10, 1 do
       if mount_buff[i] == HEADER_RECEIVE then
         parse_bytes(i)
-        gcs:send_text(MAV_SEVERITY.ERROR, string.format("Header found, time to parse %d bytes!", #mount_buff)) -- MAV_SEVERITY_ERR
-        -- TODO: move to parse bytes
         mount_buff = {}
         break
       end
@@ -240,12 +238,13 @@ function parse_bytes(start)
   for i = start, #mount_buff do
     buffer[#buffer+1] = mount_buff[i]
   end
+
   -- check if the command is the angle feedback from gimbal
-  if buffer[1] == MOUNT_CMD_ANGLE_REQUEST then
+  if buffer[2] == MOUNT_CMD_ANGLE_REQUEST then
     -- check if length matches
-    if buffer[2] == MOUNT_LENGTH_ANGLE_REQUEST then
-      local ck_a, ck_b = checksum(buffer, #buffer)
-      if ck_a == buffer[10] and ck_b == buffer[11]
+    if buffer[3] == MOUNT_LENGTH_ANGLE_REQUEST then
+      local ck_a, ck_b = checksum_mount(buffer, #buffer)
+      if ck_a == buffer[10] and ck_b == buffer[11] then
         -- checksum ok, send angles to mount
         local yaw_deg = int16_value(buffer[4], buffer[5])/182.0444
         local roll_deg = int16_value(buffer[6], buffer[7])/182.0444
@@ -408,11 +407,11 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
                           lowbyte(roll_angle_output),
                           highbyte(pitch_angle_output),
                           lowbyte(pitch_angle_output), 0, 0 }
-  local ck_a, ck_b = checksum_mount(packet_to_send, 9)
+  local ck_a, ck_b = checksum_mount(packet_to_send, #packet_to_send)
   packet_to_send[10] = ck_a
   packet_to_send[11] = ck_b
   -- send packet
-  write_bytes(packet_to_send, 11, 0)
+  write_bytes(packet_to_send, #packet_to_send, 0)
 end
 
 function check_picture()
@@ -460,7 +459,7 @@ function center_gimbal()
     0x00,
     0x00
   }
-  local ck_a, ck_b = checksum(packet, #packet)
+  local ck_a, ck_b = checksum_mount(packet, #packet)
   packet[5] = ck_a
   packet[6] = ck_b
   write_bytes(packet, #packet, 0)
@@ -486,17 +485,13 @@ function update()
   read_incoming_packets()
 
   -- ask for gimbal angles
-  test_count = test_count + 1
-  if (test_count > 50) then
-    test_count = 0
-    request_angles()
-  end
+  request_angles()
 
   -- send target angle to gimbal
   local mount_mode = mount:get_mode(MOUNT_INSTANCE)
   local roll_deg, pitch_deg, yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local roll_degs, pitch_degs, yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
-  
+
   if mount_mode == MOUNT_MODE_NEUTRAL then
     center_gimbal()
 
@@ -516,7 +511,6 @@ function update()
   debug_count = debug_count + 1
   if (G2P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
     last_print_ms = now_ms
-    gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P: r:%u w:%u err:%u ign:%u", bytes_read, bytes_written, bytes_error, msg_ignored))
     gcs:send_text(MAV_SEVERITY.INFO, string.format("G2P update frequency = %d Hz, last angle sent: R = %f, P = %f, Y = %f", debug_count//5, roll_degs, pitch_degs, yaw_degs))
     debug_count = 0
   end
