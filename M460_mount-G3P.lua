@@ -421,9 +421,9 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   end
 
   -- convert angles from deg to G3P protocol
-  local roll_angle_output = math.floor(expo(roll_angle_deg) * 182.0444 + 0.5)
-  local pitch_angle_output = math.floor(expo(pitch_angle_deg) * 182.0444 + 0.5)
-  local yaw_angle_output = math.floor(expo(yaw_angle_deg) * 182.0444 + 0.5)
+  local roll_angle_output = math.floor(roll_angle_deg * 182.0444 + 0.5)
+  local pitch_angle_output = math.floor(pitch_angle_deg * 182.0444 + 0.5)
+  local yaw_angle_output = math.floor(yaw_angle_deg * 182.0444 + 0.5)
 
   -- create packet
   local packet_to_send = {HEADER_SEND,
@@ -536,6 +536,11 @@ function update()
   -- send target angle to gimbal
   local des_roll_deg, des_pitch_deg, des_yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local des_roll_degs, des_pitch_degs, des_yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
+
+  -- add expo
+  des_roll_degs = expo(des_roll_degs)
+  des_pitch_degs = expo(des_pitch_degs)
+  des_yaw_degs = expo(des_yaw_degs)
 
   if check_centering() then
     center_gimbal()
