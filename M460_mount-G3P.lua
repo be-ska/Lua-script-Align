@@ -18,12 +18,15 @@ assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G3P_DEBUG
 assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G3P_MS param")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G3P_CENTER_CH param")
 assert(param:add_param(PARAM_TABLE_KEY, 4, "RC_EXPO", 2), "could not add G3P_CENTER_CH param")
+assert(param:add_param(PARAM_TABLE_KEY, 5, "CAM", 1), "could not add G3P_CENTER_CH param")
+
 
 -- bind parameters to variables
 local G3P_DEBUG = Parameter("G3P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
 local G3P_MS = Parameter("G3P_MS")  -- update milliseconds
 local G3P_CENTER_CH = Parameter("G3P_CENTER_CH")  -- update milliseconds
 local G3P_RC_EXPO = Parameter("G3P_RC_EXPO")
+local G3P_CAM = Parameter("G3P_CAM")
 
 -- MNT parametrs
 local MNT1_TYPE = Parameter("MNT1_TYPE")
@@ -76,6 +79,7 @@ local DV_END = 0xEA
 local uart_gimbal                       -- uart object connected to mount
 local uart_dv                           -- uart object connected to camera
 local initialised = false               -- true once connection to gimbal has been initialised
+local use_camera = false
 local cam_pic_count = 0
 local mount_buff = {}
 local mount_center_switch = false
@@ -167,13 +171,16 @@ end
 
 -- find and initialise serial port connected to gimbal
 function init()
+  -- check if serial camera is connected
+    use_camera = G3P_CAM:get() > 0
+
   -- check mount parameter
   if MNT1_TYPE:get() ~= 9 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_TYPE=9")
     do return end
   end
 
-  if CAM1_TYPE:get() ~= 4 then
+  if use_camera and CAM1_TYPE:get() ~= 4 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set CAM1_TYPE=4")
     do return end
   end
@@ -213,18 +220,27 @@ function init()
 
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
-  uart_dv = serial:find_serial(1)
-  if uart_gimbal == nil or uart_dv == nil then
-    gcs:send_text(3, "G3P: need 2 SERIALx_PROTOCOL = 28") -- MAV_SEVERITY_ERR
-    gcs:send_text(3, "G3P: set first serial for gimbal, second for DV") -- MAV_SEVERITY_ERR
-  else
-    uart_gimbal:begin(uint32_t(120000))
-    uart_gimbal:set_flow_control(0)
-    uart_dv:begin(uint32_t(115200))
-    uart_dv:set_flow_control(0)
-    initialised = true
-    gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
+  if uart_gimbal == nil then
+    gcs:send_text(3, "G3P: set SERIALx_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
+    -- die here
+    return
   end
+  uart_gimbal:begin(uint32_t(120000))
+  uart_gimbal:set_flow_control(0)
+
+  if use_camera then
+    uart_dv = serial:find_serial(1)
+    if uart_dv == nil then
+      gcs:send_text(3, "G3P: need 2 SERIALx_PROTOCOL = 28, second for DV") -- MAV_SEVERITY_ERR
+      -- die here
+      return
+    end
+  uart_dv:begin(uint32_t(115200))
+  uart_dv:set_flow_control(0)
+  end
+  gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
+
+  return update, G3P_MS:get()
 end
 
 function expo(input)
@@ -516,16 +532,11 @@ function update()
   -- get current system time
   local now_ms = millis()
 
-  -- initialise connection to gimbal and dv
-  if not initialised then
-    init()
-    return update, INIT_INTERVAL_MS
+  -- send gps coordinate and send picture command to DV
+  if use_camera then
+    send_GPS()
+    check_picture()
   end
-
-   -- send GPS coordinates
-  send_GPS()
-
-  check_picture()
 
   -- consume incoming bytes
   read_incoming_packets()
@@ -573,4 +584,4 @@ function update()
   return update, G3P_MS:get()
 end
 
-return update()
+return init, 1000
