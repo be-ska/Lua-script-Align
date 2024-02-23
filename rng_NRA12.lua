@@ -4,6 +4,7 @@
 local INIT_MILLIS = 3000
 local UART_BAUD = uint32_t(115200)
 local OUT_OF_RANGE_HIGH = 20
+local INSTANCE = 0
 
 -- Constants
 local MAV_SEVERITY = {EMERGENCY = 0, ALERT = 1, CRITICAL = 2, ERROR = 3, WARNING = 4, NOTICE = 5, INFO = 6, DEBUG = 7}
@@ -40,13 +41,18 @@ local report_count = 0
 ---------------------------------- RFND DRIVER --------------------------------
 
 function init_rng()
-        lua_rfnd_backend = rangefinder:get_backend(0)
-        if lua_rfnd_backend:type() ~= PARAM_LUA_RFND then
-            gcs:send_text(MAV_SEVERITY.INFO,"RFND: Configure RNGFND0_TYPE = " .. PARAM_LUA_RFND)
+        lua_rfnd_backend = rangefinder:get_backend(INSTANCE)
+        if lua_rfnd_backend == nil then
+            gcs:send_text(MAV_SEVERITY.ERROR, string.format("RFND: Configure RNGFND%d_TYPE = %d", INSTANCE+1, PARAM_LUA_RFND))
             return init_rng, INIT_MILLIS
         end
 
-        uart = serial:find_serial(0)
+        if lua_rfnd_backend:type() ~= PARAM_LUA_RFND then
+            gcs:send_text(MAV_SEVERITY.ERROR,"RFND: Configure RNGFND1_TYPE = " .. PARAM_LUA_RFND)
+            return init_rng, INIT_MILLIS
+        end
+
+        uart = serial:find_serial(INSTANCE)
         if uart == nil then
             gcs:send_text(MAV_SEVERITY.ERROR, "RFND: configure SERIALx_PROTOCOL = 28 and reboot")
             -- die here
@@ -78,21 +84,21 @@ function read_incoming_bytes()
                 parse_state = 2
                 header_found_ms = now
             else
-                gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 2 then
             if byte == HEADER2_TARGET_INFO then
                 parse_state = 3
             else
-                gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 3 then
             if byte == HEADER3_TARGET_INFO then
                 parse_state = 4
             else
-                gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         -- skip index and RCS
@@ -111,14 +117,14 @@ function read_incoming_bytes()
             if byte == END1 then
                 parse_state = 13
             else
-                gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 13 then
             if byte == END2 then
                 distance_received = true
                 distance_received_ms = now
-                gcs:send_text(MAV_SEVERITY.INFO, string.format("succesfully parsed"))
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("succesfully parsed"))
             end
             parse_state = 0
         end
@@ -128,7 +134,7 @@ end
 
 function send_distance(distance_m)
     if distance_m > 20 then
-        distance_m = 20
+        distance_m = 25
     end
     local sent_successfully = lua_rfnd_backend:handle_script_msg(distance_m)
     if not sent_successfully then
@@ -147,20 +153,16 @@ function update()
         report_count = report_count +1
         send_distance(distance/100)
         distance_received = false
-        -- TODO: add logging if needed
-        -- if NRA_LOG:get() > 0 then
-        --     local dist_log = math.floor(distance)
-        --     local mag_log = math.floor(magnitude)
-        --     logger:write("RDR", "mag, dist", "hh", mag_log, dist_log)
-        -- end
     elseif now - distance_received_ms > 100 and now - header_found_ms < 50 then
         send_distance(OUT_OF_RANGE_HIGH)
     end
 
-    if now - report_ms > 5000 then
-        report_ms = now
-        gcs:send_text(MAV_SEVERITY.INFO, string.format("RFND: received %d samples, last dist = %d", report_count, distance))
-        report_count = 0
+    if NRA_DEBUG:get() > 0 then
+        if now - report_ms > 5000 then
+            report_ms = now
+            gcs:send_text(MAV_SEVERITY.INFO, string.format("RFND: received %d samples, last dist = %d", report_count, distance))
+            report_count = 0
+        end
     end
 
     return update, NRA_UPDATE:get()
