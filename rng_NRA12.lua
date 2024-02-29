@@ -2,8 +2,9 @@
 
 -- User settable parameters
 local INIT_MILLIS = 3000
-local UART_BAUD = 115200
+local UART_BAUD = uint32_t(115200)
 local OUT_OF_RANGE_HIGH = 20
+local INSTANCE = 0
 
 -- Constants
 local MAV_SEVERITY = {EMERGENCY = 0, ALERT = 1, CRITICAL = 2, ERROR = 3, WARNING = 4, NOTICE = 5, INFO = 6, DEBUG = 7}
@@ -32,30 +33,40 @@ local parse_state = 0
 local distance = 0
 local distance_received = false
 local uart = nil
-local header_found_ms = 0
-local distance_received_ms = 0
+local header_found_ms = uint32_t(0)
+local distance_received_ms = uint32_t(0)
+local report_ms = uint32_t(0)
+local report_count = 0
 
 ---------------------------------- RFND DRIVER --------------------------------
 
 function init_rng()
-    local sensor_count = rangefinder:num_sensors() -- number of sensors connected
-    for j = 0, sensor_count - 1 do
-        local device = rangefinder:get_backend(j)
-        if ((not lua_rfnd_driver_found) and device and (device:type() == PARAM_LUA_RFND)) then
-            -- this is a lua driver
-            lua_rfnd_driver_found = true
-            lua_rfnd_backend = device
-            gcs:send_text(MAV_SEVERITY.INFO, "RFND: backend found")
+        lua_rfnd_backend = rangefinder:get_backend(INSTANCE)
+        if lua_rfnd_backend == nil then
+            gcs:send_text(MAV_SEVERITY.ERROR, string.format("RFND: Configure RNGFND%d_TYPE = %d", INSTANCE+1, PARAM_LUA_RFND))
+            return init_rng, INIT_MILLIS
         end
-    end
 
-    if not lua_rfnd_driver_found then
-        -- We can't use this script if user hasn't setup a lua backend
-        gcs:send_text(0, string.format("RFND: Configure RNGFNDx_TYPE = " .. PARAM_LUA_RFND))
-        return update, INIT_MILLIS
-    else
+        if lua_rfnd_backend:type() ~= PARAM_LUA_RFND then
+            gcs:send_text(MAV_SEVERITY.ERROR,"RFND: Configure RNGFND1_TYPE = " .. PARAM_LUA_RFND)
+            return init_rng, INIT_MILLIS
+        end
+
+        uart = serial:find_serial(INSTANCE)
+        if uart == nil then
+            gcs:send_text(MAV_SEVERITY.ERROR, "RFND: configure SERIALx_PROTOCOL = 28 and reboot")
+            -- die here
+            return
+        end
+
+        uart:begin(UART_BAUD)
+        uart:set_flow_control(0)
+        -- first flush the serial buffer
+        while uart:available()>0 do
+            uart:read()
+        end
+        gcs:send_text(MAV_SEVERITY.INFO, "RFND: succesfully started")
         return update, NRA_UPDATE:get()
-    end
 end
 
 function read_incoming_bytes()
@@ -73,18 +84,21 @@ function read_incoming_bytes()
                 parse_state = 2
                 header_found_ms = now
             else
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 2 then
             if byte == HEADER2_TARGET_INFO then
                 parse_state = 3
             else
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 3 then
             if byte == HEADER3_TARGET_INFO then
                 parse_state = 4
             else
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         -- skip index and RCS
@@ -103,23 +117,26 @@ function read_incoming_bytes()
             if byte == END1 then
                 parse_state = 13
             else
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("Error: %d", parse_state))
                 parse_state = 0
             end
         elseif parse_state == 13 then
             if byte == END2 then
                 distance_received = true
                 distance_received_ms = now
+                --gcs:send_text(MAV_SEVERITY.INFO, string.format("succesfully parsed"))
             end
             parse_state = 0
         end
     end
+
 end
 
 function send_distance(distance_m)
     if distance_m > 20 then
-        distance_m = 20
+        distance_m = 25
     end
-    sent_successfully = lua_rfnd_backend:handle_script_msg(distance_m)
+    local sent_successfully = lua_rfnd_backend:handle_script_msg(distance_m)
     if not sent_successfully then
         -- This should never happen as we already checked for a valid configured lua backend above
         gcs:send_text(MAV_SEVERITY.EMERGENCY, string.format("RFND: Lua Script Error"))
@@ -129,44 +146,27 @@ end
 -- -------------------------------- MAIN --------------------------------
 
 function update()
-    if not lua_rfnd_driver_found then
-        return init_rng, INIT_MILLIS
-    end
-
-    if uart == nil then
-        uart = serial:find_serial(0)
-        if uart == nil then
-            gcs:send_text(MAV_SEVERITY.ERROR, "RFND: configure SERIALx_PROTOCOL = 28")
-            return update, INIT_MILLIS
-        else
-            uart:begin(UART_BAUD)
-            uart:set_flow_control(0)
-            -- first flush the serial buffer
-            while uart:available()>0 do
-                uart:read()
-            end
-            gcs:send_text(MAV_SEVERITY.INFO, "RFND: succesfully started")
-        end
-    end
-
     -- consume incoming bytes
     read_incoming_bytes()
     local now = millis()
     if distance_received then
+        report_count = report_count +1
         send_distance(distance/100)
         distance_received = false
-        -- TODO: add logging if needed
-        -- if NRA_LOG:get() > 0 then
-        --     local dist_log = math.floor(distance)
-        --     local mag_log = math.floor(magnitude)
-        --     logger:write("RDR", "mag, dist", "hh", mag_log, dist_log)
-        -- end
     elseif now - distance_received_ms > 100 and now - header_found_ms < 50 then
         send_distance(OUT_OF_RANGE_HIGH)
+    end
+
+    if NRA_DEBUG:get() > 0 then
+        if now - report_ms > 5000 then
+            report_ms = now
+            gcs:send_text(MAV_SEVERITY.INFO, string.format("RFND: received %d samples, last dist = %d", report_count, distance))
+            report_count = 0
+        end
     end
 
     return update, NRA_UPDATE:get()
 end
 
 -- start running update loop
-return update, INIT_MILLIS
+return init_rng, NRA_UPDATE:get()
