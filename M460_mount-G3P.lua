@@ -41,7 +41,6 @@ local CAM1_TYPE = Parameter("CAM1_TYPE")
 
 -- global definitions
 local MAV_SEVERITY = {EMERGENCY=0, ALERT=1, CRITICAL=2, ERROR=3, WARNING=4, NOTICE=5, INFO=6, DEBUG=7}
-local INIT_INTERVAL_MS = 3000           -- attempt to initialise the gimbal at this interval
 local MOUNT_INSTANCE = 0                -- always control the first mount/gimbal
 local GPS_INSTANCE = gps:primary_sensor()
 local MOUNT_RC_CENTER = 9
@@ -78,7 +77,6 @@ local DV_END = 0xEA
 -- local variables and definitions
 local uart_gimbal                       -- uart object connected to mount
 local uart_dv                           -- uart object connected to camera
-local initialised = false               -- true once connection to gimbal has been initialised
 local use_camera = false
 local cam_pic_count = 0
 local mount_buff = {}
@@ -87,6 +85,7 @@ local yaw_deg = 0
 local roll_deg = 0
 local pitch_deg = 0
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
+local last_angle_received_ms = uint32_t(0)
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -177,23 +176,23 @@ function init()
   -- check mount parameter
   if MNT1_TYPE:get() ~= 9 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_TYPE=9")
-    do return end
+    return
   end
 
   if use_camera and CAM1_TYPE:get() ~= 4 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set CAM1_TYPE=4")
-    do return end
+    return
   end
 
   if MNT1_PITCH_MAX:get() == nil or MNT1_PITCH_MIN:get() == nil or MNT1_ROLL_MAX:get() == nil or MNT1_ROLL_MIN:get() == nil or MNT1_YAW_MAX:get() == nil or MNT1_YAW_MIN:get() == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: check MNT1_ parameters")    
-    do return end
+    return
   end
 
   local rc_rate = MNT1_RC_RATE:get()
   if rc_rate == nil or rc_rate <= 5 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_RC_RATE > 5")    
-    do return end
+    return
   else
     MOUNT_RC_RATE = rc_rate
   end
@@ -201,7 +200,7 @@ function init()
   local center_rc = G3P_CENTER_CH:get()
   if center_rc == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set G3P_CENTER_CH with RC centering channel")
-    do return end
+    return
   else
     MOUNT_RC_CENTER = center_rc
   end
@@ -209,7 +208,7 @@ function init()
   local expo_rc = G3P_RC_EXPO:get()
   if expo_rc == nil or expo_rc > 4 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: G3P_RC_EXPO out of range")
-    do return end
+    return
   elseif expo_rc < 1 then
     -- do not allow negative exponents
     MOUNT_RC_EXPO = 1
@@ -222,7 +221,6 @@ function init()
   uart_gimbal = serial:find_serial(0)
   if uart_gimbal == nil then
     gcs:send_text(3, "G3P: set SERIALx_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-    -- die here
     return
   end
   uart_gimbal:begin(uint32_t(120000))
@@ -232,7 +230,6 @@ function init()
     uart_dv = serial:find_serial(1)
     if uart_dv == nil then
       gcs:send_text(3, "G3P: need 2 SERIALx_PROTOCOL = 28, second for DV") -- MAV_SEVERITY_ERR
-      -- die here
       return
     end
   uart_dv:begin(uint32_t(115200))
@@ -294,6 +291,7 @@ function parse_bytes(start)
         roll_deg = int16_value(buffer[6], buffer[7])/182.0444
         pitch_deg = int16_value(buffer[8], buffer[9])/182.0444
         mount:set_attitude_euler(MOUNT_INSTANCE, roll_deg, pitch_deg, yaw_deg)
+        last_angle_received_ms = millis()
       else
         gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CHECKSUM") -- MAV_SEVERITY_ERR
       end
@@ -572,6 +570,12 @@ function update()
     des_roll_degs = 0
     des_pitch_degs = 0
     des_yaw_degs = 0
+  end
+
+  -- check mount state
+  if now_ms - last_angle_received_ms > 20000 then
+    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get gimbal angles, freezing")
+    return
   end
 
   -- status reporting
