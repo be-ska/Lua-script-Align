@@ -18,7 +18,7 @@ assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G3P_DEBUG
 assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G3P_MS param")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G3P_CENTER_CH param")
 assert(param:add_param(PARAM_TABLE_KEY, 4, "RC_EXPO", 2), "could not add G3P_CENTER_CH param")
-assert(param:add_param(PARAM_TABLE_KEY, 5, "CAM", 1), "could not add G3P_CENTER_CH param")
+assert(param:add_param(PARAM_TABLE_KEY, 5, "CAM", 2), "could not add G3P_CENTER_CH param")
 
 
 -- bind parameters to variables
@@ -170,29 +170,41 @@ end
 
 -- find and initialise serial port connected to gimbal
 function init()
-  -- check if serial camera is connected
-    use_camera = G3P_CAM:get() > 0
 
+  local need_reboot = false
+  -- check if serial camera is connected
+    if G3P_CAM:get() > 1 then
+      use_camera = true
+    elseif G3P_CAM:get() > 0 then
+      use_camera = false
+    else
+      -- stop script
+      return
+    end
+    
   -- check mount parameter
   if MNT1_TYPE:get() ~= 9 then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_TYPE=9")
-    return
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting MNT1_TYPE=9")
+    MNT1_TYPE:set_and_save(9)
+    need_reboot = true
   end
 
   if use_camera and CAM1_TYPE:get() ~= 4 then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set CAM1_TYPE=4")
-    return
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting CAM1_TYPE=4")
+    MNT1_TYPE:set_and_save(4)
+    need_reboot = true
   end
 
   if MNT1_PITCH_MAX:get() == nil or MNT1_PITCH_MIN:get() == nil or MNT1_ROLL_MAX:get() == nil or MNT1_ROLL_MIN:get() == nil or MNT1_YAW_MAX:get() == nil or MNT1_YAW_MIN:get() == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: check MNT1_ parameters")    
-    return
-  end
+    need_reboot = true
+    end
 
   local rc_rate = MNT1_RC_RATE:get()
   if rc_rate == nil or rc_rate <= 5 then
-    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set MNT1_RC_RATE > 5")    
-    return
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting MNT1_RC_RATE > 5")
+    MNT1_RC_RATE:set_and_save(30)
+    need_reboot = true
   else
     MOUNT_RC_RATE = rc_rate
   end
@@ -200,7 +212,7 @@ function init()
   local center_rc = G3P_CENTER_CH:get()
   if center_rc == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set G3P_CENTER_CH with RC centering channel")
-    return
+    need_reboot = true
   else
     MOUNT_RC_CENTER = center_rc
   end
@@ -208,7 +220,7 @@ function init()
   local expo_rc = G3P_RC_EXPO:get()
   if expo_rc == nil or expo_rc > 4 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: G3P_RC_EXPO out of range")
-    return
+    need_reboot = true
   elseif expo_rc < 1 then
     -- do not allow negative exponents
     MOUNT_RC_EXPO = 1
@@ -220,21 +232,32 @@ function init()
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
   if uart_gimbal == nil then
-    gcs:send_text(3, "G3P: set SERIALx_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-    return
+    gcs:send_text(3, "G3P: setting SERIAL3_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
+    Parameter("SERIAL3_PROTOCOL"):set_and_save(28)
+    Parameter("SERIAL3_BAUD"):set_and_save(115)
+    need_reboot = true
   end
-  uart_gimbal:begin(uint32_t(120000))
-  uart_gimbal:set_flow_control(0)
 
   if use_camera then
     uart_dv = serial:find_serial(1)
     if uart_dv == nil then
-      gcs:send_text(3, "G3P: need 2 SERIALx_PROTOCOL = 28, second for DV") -- MAV_SEVERITY_ERR
+      gcs:send_text(3, "G3P: setting SERIAL4_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
+      Parameter("SERIAL4_PROTOCOL"):set_and_save(28)
+      Parameter("SERIAL4_BAUD"):set_and_save(115)
+      gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
       return
     end
-  uart_dv:begin(uint32_t(115200))
-  uart_dv:set_flow_control(0)
+    uart_dv:begin(uint32_t(115200))
+    uart_dv:set_flow_control(0)
   end
+  
+  if need_reboot then
+    gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
+    return
+  end
+  
+  uart_gimbal:begin(uint32_t(120000))
+  uart_gimbal:set_flow_control(0)
   gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
 
   return update, G3P_MS:get()
