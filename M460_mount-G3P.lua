@@ -170,7 +170,6 @@ end
 
 -- find and initialise serial port connected to gimbal
 function init()
-
   local need_reboot = false
   -- check if serial camera is connected
     if G3P_CAM:get() > 1 then
@@ -191,7 +190,7 @@ function init()
 
   if use_camera and CAM1_TYPE:get() ~= 4 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting CAM1_TYPE=4")
-    MNT1_TYPE:set_and_save(4)
+    CAM1_TYPE:set_and_save(4)
     need_reboot = true
   end
 
@@ -203,7 +202,7 @@ function init()
   local rc_rate = MNT1_RC_RATE:get()
   if rc_rate == nil or rc_rate <= 5 then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting MNT1_RC_RATE > 5")
-    MNT1_RC_RATE:set_and_save(30)
+    MNT1_RC_RATE:set_and_save(60)
     need_reboot = true
   else
     MOUNT_RC_RATE = rc_rate
@@ -229,12 +228,19 @@ function init()
     MOUNT_RC_EXPO = math.floor(expo_rc + 0.5)
   end
 
+  if rc:find_channel_for_option(213) == nil or rc:find_channel_for_option(214) == nil then
+    param:set_and_save("RC11_OPTION", 213) --pitch
+    param:set_and_save("RC13_OPTION", 214) --yaw
+    gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: setting RC input")
+    need_reboot = true
+  end
+
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
   if uart_gimbal == nil then
     gcs:send_text(3, "G3P: setting SERIAL3_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-    Parameter("SERIAL3_PROTOCOL"):set_and_save(28)
-    Parameter("SERIAL3_BAUD"):set_and_save(115)
+    param:set_and_save("SERIAL3_PROTOCOL", 28)
+    param:set_and_save("SERIAL3_BAUD", 115)
     need_reboot = true
   end
 
@@ -242,8 +248,8 @@ function init()
     uart_dv = serial:find_serial(1)
     if uart_dv == nil then
       gcs:send_text(3, "G3P: setting SERIAL4_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-      Parameter("SERIAL4_PROTOCOL"):set_and_save(28)
-      Parameter("SERIAL4_BAUD"):set_and_save(115)
+      param:set_and_save("SERIAL4_PROTOCOL", 28)
+      param:set_and_save("SERIAL4_BAUD", 115)
       gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
       return
     end
@@ -259,6 +265,7 @@ function init()
   uart_gimbal:begin(uint32_t(120000))
   uart_gimbal:set_flow_control(0)
   gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
+  last_angle_received_ms = millis()
 
   return update, G3P_MS:get()
 end
@@ -553,6 +560,12 @@ function update()
   -- get current system time
   local now_ms = millis()
 
+  -- check mount state
+  if now_ms - last_angle_received_ms > 20000 then
+    gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: can't get gimbal angles, freezing"))
+    return
+  end
+
   -- send gps coordinate and send picture command to DV
   if use_camera then
     send_GPS()
@@ -569,11 +582,6 @@ function update()
   local des_roll_deg, des_pitch_deg, des_yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local des_roll_degs, des_pitch_degs, des_yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
 
-  -- add expo
-  des_roll_degs = expo(des_roll_degs)
-  des_pitch_degs = expo(des_pitch_degs)
-  des_yaw_degs = expo(des_yaw_degs)
-
   if check_centering() then
     center_gimbal()
 
@@ -582,7 +590,11 @@ function update()
     return update, 2000
 
   elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
-     send_target_angles(des_pitch_degs, des_roll_degs, des_yaw_degs)
+    -- add expo
+    des_roll_degs = expo(des_roll_degs)
+    des_pitch_degs = expo(des_pitch_degs)
+    des_yaw_degs = expo(des_yaw_degs)
+    send_target_angles(des_pitch_degs, des_roll_degs, des_yaw_degs)
 
   else
     gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get target angles")
@@ -593,12 +605,6 @@ function update()
     des_roll_degs = 0
     des_pitch_degs = 0
     des_yaw_degs = 0
-  end
-
-  -- check mount state
-  if now_ms - last_angle_received_ms > 20000 then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get gimbal angles, freezing")
-    return
   end
 
   -- status reporting
