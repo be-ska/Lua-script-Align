@@ -75,8 +75,7 @@ local DV_CRC2_CAPTURE = 0x95
 local DV_END = 0xEA
 
 -- local variables and definitions
-local uart_gimbal                       -- uart object connected to mount
-local uart_dv                           -- uart object connected to camera
+local uart
 local use_camera = false
 local cam_pic_count = 0
 local mount_buff = {}
@@ -236,34 +235,22 @@ function init()
   end
 
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
-  uart_gimbal = serial:find_serial(0)
-  if uart_gimbal == nil then
+  uart = serial:find_serial(0)
+  if uart == nil then
     gcs:send_text(3, "G3P: setting SERIAL3_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
     param:set_and_save("SERIAL3_PROTOCOL", 28)
     param:set_and_save("SERIAL3_BAUD", 115)
-    need_reboot = true
+    gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
+    return
   end
 
-  if use_camera then
-    uart_dv = serial:find_serial(1)
-    if uart_dv == nil then
-      gcs:send_text(3, "G3P: setting SERIAL4_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-      param:set_and_save("SERIAL4_PROTOCOL", 28)
-      param:set_and_save("SERIAL4_BAUD", 115)
-      gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
-      return
-    end
-    uart_dv:begin(uint32_t(115200))
-    uart_dv:set_flow_control(0)
-  end
-  
   if need_reboot then
     gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
     return
   end
-  
-  uart_gimbal:begin(uint32_t(120000))
-  uart_gimbal:set_flow_control(0)
+
+  uart:begin(uint32_t(120000))
+  uart:set_flow_control(0)
   gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")
   last_angle_received_ms = millis()
 
@@ -287,10 +274,10 @@ end
 
 -- reading incoming packets from gimbal
 function read_incoming_packets()
-  local n_bytes = uart_gimbal:available()
+  local n_bytes = uart:available()
   while n_bytes > 0 do
     n_bytes = n_bytes - 1
-    mount_buff[#mount_buff+1] = uart_gimbal:read()
+    mount_buff[#mount_buff+1] = uart:read()
   end
   if #mount_buff >= 11 then
     for i = 1, #mount_buff-10, 1 do
@@ -322,39 +309,35 @@ function parse_bytes(start)
         pitch_deg = int16_value(buffer[8], buffer[9])/182.0444
         mount:set_attitude_euler(MOUNT_INSTANCE, roll_deg, pitch_deg, yaw_deg)
         last_angle_received_ms = millis()
-      else
-        gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CHECKSUM") -- MAV_SEVERITY_ERR
+      elseif G3P_DEBUG:get() > 0 then
+        gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: wrong CHECKSUM: %x %x %x %x %x %x %x %x %x %x %x", buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11])) -- MAV_SEVERITY_ERR
       end
-    else
+    elseif G3P_DEBUG:get() > 0 then
       gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong LENGTH received") -- MAV_SEVERITY_ERR
     end
-  else
+  elseif G3P_DEBUG:get() > 0 then
     gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CMD received") -- MAV_SEVERITY_ERR
   end
 end
 
--- write a byte to the uart_gimbal
-function write_bytes(buff,len, uart)
+-- write a byte to the uart
+function write_bytes(buff,len)
   if #buff == 0 or #buff < len then
     gcs:send_text(MAV_SEVERITY.ERROR, "G3P: failed to write byte") -- MAV_SEVERITY_ERR
     return false
   end
 
-  local packet_string = "packet send at uart " .. uart .. ": "
+  local packet_string = "packet send:"
 
   for i = 1, len, 1 do
     local byte_to_write = buff[i] & 0xFF
-    if uart == 0 then
-      uart_gimbal:write(byte_to_write)
-    elseif uart == 1 then
-      uart_dv:write(byte_to_write)
-    end
+    uart:write(byte_to_write)
   end
 
   if G3P_DEBUG:get() > 3 then
     gcs:send_text(MAV_SEVERITY.INFO, packet_string)
   end
-  
+
   return true
 end
 
@@ -448,11 +431,11 @@ function send_GPS()
   packet5[7], packet5[8] = checksum_dv(packet5, #packet5)
 
   -- send packet
-  write_bytes(packet1, #packet1, 1)
-  write_bytes(packet2, #packet2, 1)
-  write_bytes(packet3, #packet3, 1)
-  write_bytes(packet4, #packet4, 1)
-  write_bytes(packet5, #packet5, 1)
+  write_bytes(packet1, #packet1)
+  write_bytes(packet2, #packet2)
+  write_bytes(packet3, #packet3)
+  write_bytes(packet4, #packet4)
+  write_bytes(packet5, #packet5)
   return true
 end
 
@@ -485,7 +468,7 @@ function send_target_angles(pitch_angle_deg, roll_angle_deg, yaw_angle_deg)
   packet_to_send[10] = ck_a
   packet_to_send[11] = ck_b
   -- send packet
-  write_bytes(packet_to_send, #packet_to_send, 0)
+  write_bytes(packet_to_send, #packet_to_send)
 end
 
 function check_picture()
@@ -506,7 +489,7 @@ function check_picture()
       DV_CRC2_CAPTURE,
       DV_END
     }
-    write_bytes(packet, #packet, 1)
+    write_bytes(packet, #packet)
     if G3P_DEBUG:get() > 0 then
       gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P: took pic %u", cam_pic_count))
     end
@@ -521,7 +504,7 @@ function request_angles()
     0x05,
     0x0A
   }
-  write_bytes(packet, #packet, 0)
+  write_bytes(packet, #packet)
 end
 
 function center_gimbal()
@@ -536,7 +519,7 @@ function center_gimbal()
   local ck_a, ck_b = checksum_mount(packet, #packet)
   packet[5] = ck_a
   packet[6] = ck_b
-  write_bytes(packet, #packet, 0)
+  write_bytes(packet, #packet)
 end
 
 function check_centering()
