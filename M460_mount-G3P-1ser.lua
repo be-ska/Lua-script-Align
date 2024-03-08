@@ -85,6 +85,7 @@ local roll_deg = 0
 local pitch_deg = 0
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
 local last_angle_received_ms = uint32_t(0)
+local parse_state = 0
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -273,50 +274,56 @@ function expo(input)
 end
 
 -- reading incoming packets from gimbal
-function read_incoming_packets()
+function parse_bytes()
   local n_bytes = uart:available()
   while n_bytes > 0 do
-    n_bytes = n_bytes - 1
-    mount_buff[#mount_buff+1] = uart:read()
-  end
-  if #mount_buff >= 11 then
-    for i = 1, #mount_buff-10, 1 do
-      if mount_buff[i] == HEADER_RECEIVE then
-        parse_bytes(i)
-        mount_buff = {}
-        break
-      end
-    end
-  end
-end
-
-function parse_bytes(start)
-  -- populate local packet
-  local buffer = {}
-  for i = start, #mount_buff do
-    buffer[#buffer+1] = mount_buff[i]
-  end
-
-  -- check if the command is the angle feedback from gimbal
-  if buffer[2] == MOUNT_CMD_ANGLE_REQUEST then
-    -- check if length matches
-    if buffer[3] == MOUNT_LENGTH_ANGLE_REQUEST then
-      local ck_a, ck_b = checksum_mount(buffer, #buffer)
-      if ck_a == buffer[10] and ck_b == buffer[11] then
-        -- checksum ok, send angles to mount
-        yaw_deg = int16_value(buffer[4], buffer[5])/182.0444
-        roll_deg = int16_value(buffer[6], buffer[7])/182.0444
-        pitch_deg = int16_value(buffer[8], buffer[9])/182.0444
-        mount:set_attitude_euler(MOUNT_INSTANCE, roll_deg, pitch_deg, yaw_deg)
-        last_angle_received_ms = millis()
+    n_bytes = n_bytes-1
+    local byte = uart:read()
+    if parse_state == 0 then
+      if byte == HEADER_RECEIVE then
+          parse_state = 1
+          mount_buff = {}
+          mount_buff[1] = byte
       elseif G3P_DEBUG:get() > 0 then
-        gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: wrong CHECKSUM: %x %x %x %x %x %x %x %x %x %x %x", buffer[1], buffer[2], buffer[3], buffer[4], buffer[5], buffer[6], buffer[7], buffer[8], buffer[9], buffer[10], buffer[11])) -- MAV_SEVERITY_ERR
+        gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong HEADER received") -- MAV_SEVERITY_ERR
       end
-    elseif G3P_DEBUG:get() > 0 then
-      gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong LENGTH received") -- MAV_SEVERITY_ERR
+    elseif parse_state == 1 then
+      if byte == MOUNT_CMD_ANGLE_REQUEST then
+          parse_state = 2
+          mount_buff[2] = byte
+      else
+        if G3P_DEBUG:get() > 0 then
+          gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CMD received") -- MAV_SEVERITY_ERR
+        end
+        parse_state = 0
+      end
+    elseif parse_state == 2 then
+      if byte == MOUNT_LENGTH_ANGLE_REQUEST then
+        parse_state = 3
+        mount_buff[3] = byte
+      else
+        if G3P_DEBUG:get() > 0 then
+          gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong LENGTH received") -- MAV_SEVERITY_ERR
+        end
+        parse_state = 0
+      end
+    elseif parse_state == 3 then
+      mount_buff[#mount_buff+1] = byte
+      if #mount_buff == 11 then
+        local ck_a, ck_b = checksum_mount(mount_buff, #mount_buff)
+        if ck_a == mount_buff[10] and ck_b == mount_buff[11] then
+          -- checksum ok, send angles to mount
+          yaw_deg = int16_value(mount_buff[4], mount_buff[5])/182.0444
+          roll_deg = int16_value(mount_buff[6], mount_buff[7])/182.0444
+          pitch_deg = int16_value(mount_buff[8], mount_buff[9])/182.0444
+          mount:set_attitude_euler(MOUNT_INSTANCE, roll_deg, pitch_deg, yaw_deg)
+          last_angle_received_ms = millis()
+        elseif G3P_DEBUG:get() > 0 then
+          gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: wrong CHECKSUM: %x %x %x %x %x %x %x %x %x %x %x", mount_buff[1], mount_buff[2], mount_buff[3], mount_buff[4], mount_buff[5], mount_buff[6], mount_buff[7], mount_buff[8], mount_buff[9], mount_buff[10], mount_buff[11])) -- MAV_SEVERITY_ERR
+        end
+      parse_state = 0
+      end
     end
-  elseif G3P_DEBUG:get() > 0 then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: wrong CMD received") -- MAV_SEVERITY_ERR
   end
 end
 
@@ -556,7 +563,7 @@ function update()
   end
 
   -- consume incoming bytes
-  read_incoming_packets()
+  parse_bytes()
 
   -- ask for gimbal angles
   request_angles()
