@@ -1,4 +1,4 @@
--- mount-G3P-driver.lua: Align G3P mount/gimbal driver
+-- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.0
 
 --[[
   How to use
@@ -86,6 +86,7 @@ local pitch_deg = 0
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
 local last_angle_received_ms = uint32_t(0)
 local parse_state = 0
+local count = 0
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -549,56 +550,56 @@ function update()
 
   -- get current system time
   local now_ms = millis()
+  count = count + 1
 
   -- check mount state
-  if now_ms - last_angle_received_ms > 20000 then
+  if now_ms - last_angle_received_ms > 60000 then
     gcs:send_text(MAV_SEVERITY.ERROR, string.format("G3P: can't get gimbal angles, freezing"))
     return
   end
 
   -- send gps coordinate and send picture command to DV
-  if use_camera then
+  if use_camera and count == 1 then
     send_GPS()
     check_picture()
+  end
+
+  -- ask for gimbal angles
+  if count == 2 then
+    request_angles()
   end
 
   -- consume incoming bytes
   parse_bytes()
 
-  -- ask for gimbal angles
-  request_angles()
-
   -- send target angle to gimbal
   local des_roll_deg, des_pitch_deg, des_yaw_deg, yaw_is_ef = mount:get_angle_target(MOUNT_INSTANCE)
   local des_roll_degs, des_pitch_degs, des_yaw_degs, yaw_is_ef_rate = mount:get_rate_target(MOUNT_INSTANCE)
 
-  if check_centering() then
-    center_gimbal()
+  if count == 3 then
+    if check_centering() then
+      center_gimbal()
 
-  elseif des_roll_deg and des_pitch_deg and des_yaw_deg then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: set MNT1_RC_RATE parameter")
-    return update, 2000
+    elseif des_roll_deg and des_pitch_deg and des_yaw_deg then
+      gcs:send_text(MAV_SEVERITY.ERROR, "G3P: set MNT1_RC_RATE parameter")
+      return update, 2000
 
-  elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
-    -- add expo
-    des_roll_degs = expo(des_roll_degs)
-    des_pitch_degs = expo(des_pitch_degs)
-    des_yaw_degs = expo(des_yaw_degs)
-    send_target_angles(des_pitch_degs, des_roll_degs, des_yaw_degs)
+    elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
+      -- add expo
+      des_roll_degs = expo(des_roll_degs)
+      des_pitch_degs = expo(des_pitch_degs)
+      des_yaw_degs = expo(des_yaw_degs)
+      send_target_angles(des_pitch_degs, 0, des_yaw_degs)
 
-  else
-    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get target angles")
-    return update, 2000
-  end
-
-  if des_roll_degs == nil or des_pitch_degs == nil or des_yaw_degs == nil then
-    des_roll_degs = 0
-    des_pitch_degs = 0
-    des_yaw_degs = 0
+    else
+      gcs:send_text(MAV_SEVERITY.ERROR, "G3P: can't get target angles")
+      return update, 2000
+    end
+    count = 0
   end
 
   -- status reporting
-  if (G3P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) then
+  if (G3P_DEBUG:get() > 0) and (now_ms - last_print_ms > 5000) and des_roll_degs ~= nil and des_pitch_degs ~= nil and des_yaw_degs ~= nil then
     last_print_ms = now_ms
     gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P angle: R = %f P = %f Y = %f, speed: R = %f P = %f Y = %f", roll_deg, pitch_deg, yaw_deg, des_roll_degs, des_pitch_degs, des_yaw_degs))
     debug_count = 0

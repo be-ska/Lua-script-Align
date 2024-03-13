@@ -1,4 +1,5 @@
--- emergency stop, starter and fuel check for Align GA22
+-- emergency stop, starter and fuel check for Align mower - version 1.0
+-- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
 local MILLIS_UPDATE = 100
@@ -19,6 +20,7 @@ assert(param:add_param(PARAM_TABLE_KEY, 7, "VIBE_ON", 2), "could not replace par
 
 -- bind parameters to variables
 local ENG_DEBUG = Parameter()
+local ENG_FUEL = Parameter()
 local ENG_REV_IGN = Parameter()
 local ENG_REV_STR = Parameter()
 local ENG_CH = Parameter()
@@ -26,6 +28,7 @@ local ENG_VIBE_OFF = Parameter()
 local ENG_VIBE_ON = Parameter()
 
 ENG_DEBUG:init("ENG_DEBUG")
+ENG_FUEL:init("ENG_FUEL")
 ENG_CH:init("ENG_CH")
 ENG_REV_IGN:init("ENG_REV_IGN")
 ENG_REV_STR:init("ENG_REV_STR")
@@ -55,7 +58,9 @@ local starter_on_ms = uint32_t(0)
 local last_gcs_send = uint32_t(0)
 
 -- init gpio
-gpio:pinMode(FUEL_PIN,0) -- set fuel pin as input
+if ENG_FUEL:get() > 0 then
+    gpio:pinMode(FUEL_PIN,0) -- set fuel pin as input
+end
 gpio:pinMode(IGNITION_PIN,1) -- set ignition pin as output
 gpio:write(IGNITION_PIN, ignition_off) -- set ignition off
 gpio:pinMode(START_PIN,1) -- set ignition pin as output
@@ -174,7 +179,7 @@ function check_fuel()
     if gpio:read(FUEL_PIN) then
         fuel_state_now = 1
     end
-    -- compare with fuel state saved, if different update parameter
+    -- compare with fuel state saved, if different update
     if fuel_state_now ~= fuel_state then
         if fuel_state_now == 1 then
             fuel_state = 1
@@ -193,11 +198,15 @@ end
 function update()
     set_ignition()
     set_starter()
-    check_fuel()
+    if ENG_FUEL:get() > 0 then
+        check_fuel()
+    end
     if millis() - last_gcs_send > 1000 then
         last_gcs_send = millis()
         gcs:send_named_float("starter", starter_state)
-        gcs:send_named_float("fuel", fuel_state)
+        if ENG_FUEL:get() > 0 then
+            gcs:send_named_float("fuel", fuel_state)
+        end
     end
     return update, MILLIS_UPDATE
 end
