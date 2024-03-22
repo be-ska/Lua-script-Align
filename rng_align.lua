@@ -3,7 +3,7 @@
 -- User settable parameters
 local UART_BAUD = uint32_t(115200)
 local OUT_OF_RANGE_HIGH = 50
-local INSTANCE = 0
+local INSTANCE = 1
 
 -- Constants
 local MAV_SEVERITY = {EMERGENCY = 0, ALERT = 1, CRITICAL = 2, ERROR = 3, WARNING = 4, NOTICE = 5, INFO = 6, DEBUG = 7}
