@@ -1,7 +1,6 @@
--- Driver for Custom Serial Rangefinder (NRA12) - version 1.0
+-- Driver for Custom Serial Rangefinder (NRA12) - version 1.1
 
 -- User settable parameters
-local INIT_MILLIS = 3000
 local UART_BAUD = uint32_t(115200)
 local OUT_OF_RANGE_HIGH = 20
 local INSTANCE = 0
@@ -23,18 +22,14 @@ assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), 'could not add param1')
 assert(param:add_param(PARAM_TABLE_KEY, 2, "LOG", 0), 'could not add param2')
 assert(param:add_param(PARAM_TABLE_KEY, 3, "UPDATE", 24), 'could not add param3')
 local NRA_DEBUG = Parameter("NRA_DEBUG")
-local NRA_LOG = Parameter("NRA_LOG")
 local NRA_UPDATE = Parameter("NRA_UPDATE")
 
 -- Global variables
 local lua_rfnd_backend  -- store lua backend here
-local lua_rfnd_driver_found = false -- true if user has configured lua backend
 local parse_state = 0
 local distance = 0
 local distance_received = false
 local uart = nil
-local header_found_ms = uint32_t(0)
-local distance_received_ms = uint32_t(0)
 local report_ms = uint32_t(0)
 local report_count = 0
 
@@ -133,8 +128,8 @@ function read_incoming_bytes()
 end
 
 function send_distance(distance_m)
-    if distance_m > 20 then
-        distance_m = 25
+    if distance_m >= OUT_OF_RANGE_HIGH then
+        distance_m = OUT_OF_RANGE_HIGH+5
     end
     local sent_successfully = lua_rfnd_backend:handle_script_msg(distance_m)
     if not sent_successfully then
@@ -146,14 +141,14 @@ end
 -- -------------------------------- MAIN --------------------------------
 
 function update()
+    local now = millis()
     -- consume incoming bytes
     read_incoming_bytes()
-    local now = millis()
     if distance_received then
         report_count = report_count +1
         send_distance(distance/100)
         distance_received = false
-    elseif now - distance_received_ms > 100 and now - header_found_ms < 50 then
+    else
         send_distance(OUT_OF_RANGE_HIGH)
     end
 
@@ -165,7 +160,8 @@ function update()
         end
     end
 
-    return update, NRA_UPDATE:get()
+    local elapsed =  (millis() - now):toint()
+    return update, math.abs(NRA_UPDATE:get() - elapsed)
 end
 
 -- start running update loop
