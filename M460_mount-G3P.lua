@@ -1,15 +1,13 @@
--- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.0
+-- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.1
 
---[[
-  How to use
-    Connect gimbal UART to one of the autopilot's serial ports
-    Set SERIALx_PROTOCOL = 28 (Scripting) where "x" corresponds to the serial port connected to the gimbal
-    Set SCR_ENABLE = 1 to enable scripting and reboot the autopilot
-    Set MNT1_TYPE = 9 (Scripting) to enable the mount/gimbal scripting driver
-    Set MNT1_RC_RATE = 60 to use gimbal speed mode
-    Set CAM1_TYPE = 4 (Mount)
-    Copy this script to the autopilot's SD card in the APM/scripts directory and reboot the autopilot
---]]
+  -- How to use
+  --   Connect gimbal UART to one of the autopilot's serial ports
+  --   Set SERIALx_PROTOCOL = 28 (Scripting) where "x" corresponds to the serial port connected to the gimbal
+  --   Set SCR_ENABLE = 1 to enable scripting and reboot the autopilot
+  --   Set MNT1_TYPE = 9 (Scripting) to enable the mount/gimbal scripting driver
+  --   Set MNT1_RC_RATE = 60 to use gimbal speed mode
+  --   Set CAM1_TYPE = 4 (Mount)
+  --   Copy this script to the autopilot's SD card in the APM/scripts directory and reboot the autopilot
 
 -- parameters
 local PARAM_TABLE_KEY = 41
@@ -239,30 +237,28 @@ function init()
   -- find and init first and second instance of SERIALx_PROTOCOL = 28 (Scripting)
   uart_gimbal = serial:find_serial(0)
   if uart_gimbal == nil then
-    gcs:send_text(3, "G3P: setting SERIAL3_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-    param:set_and_save("SERIAL3_PROTOCOL", 28)
-    param:set_and_save("SERIAL3_BAUD", 115)
+    gcs:send_text(3, "G3P: setting SERIAL5_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
+    param:set_and_save("SERIAL5_PROTOCOL", 28)
     need_reboot = true
   end
 
   if use_camera then
     uart_dv = serial:find_serial(1)
     if uart_dv == nil then
-      gcs:send_text(3, "G3P: setting SERIAL4_PROTOCOL = 28 for gimbal") -- MAV_SEVERITY_ERR
-      param:set_and_save("SERIAL4_PROTOCOL", 28)
-      param:set_and_save("SERIAL4_BAUD", 115)
+      gcs:send_text(3, "G3P: setting SERIAL7_PROTOCOL = 28 for DV") -- MAV_SEVERITY_ERR
+      param:set_and_save("SERIAL7_PROTOCOL", 28)
       gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
       return
     end
     uart_dv:begin(uint32_t(115200))
     uart_dv:set_flow_control(0)
   end
-  
+
   if need_reboot then
     gcs:send_text(3, "G3P: need reboot") -- MAV_SEVERITY_ERR
     return
   end
-  
+
   uart_gimbal:begin(uint32_t(120000))
   uart_gimbal:set_flow_control(0)
   gcs:send_text(MAV_SEVERITY.INFO, "G3P: started")

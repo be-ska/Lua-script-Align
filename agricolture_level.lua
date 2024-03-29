@@ -1,4 +1,4 @@
--- control nozzle based on pump, check sprayer level
+-- check sprayer level - version 1.0
 
 -- user parameters
 local MILLIS_UPDATE = 1000

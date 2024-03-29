@@ -1,4 +1,4 @@
--- Driver for Custom Serial Rangefinder (NRA12) - version 1.1
+-- Driver for Custom Serial Rangefinder (NRA12) - version 1.3
 
 -- User settable parameters
 local UART_BAUD = uint32_t(115200)
@@ -17,12 +17,15 @@ local END1 = 0x55
 local END2 = 0x55
 
 -- Parameters
-assert(param:add_table(PARAM_TABLE_KEY, "NRA_", 3), 'could not add param table')
+assert(param:add_table(PARAM_TABLE_KEY, "NRA_", 4), 'could not add param table')
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), 'could not add param1')
 assert(param:add_param(PARAM_TABLE_KEY, 2, "LOG", 0), 'could not add param2')
 assert(param:add_param(PARAM_TABLE_KEY, 3, "UPDATE", 24), 'could not add param3')
+assert(param:add_param(PARAM_TABLE_KEY, 4, "AVD_CM", 1000), 'could not add param4')
+
 local NRA_DEBUG = Parameter("NRA_DEBUG")
 local NRA_UPDATE = Parameter("NRA_UPDATE")
+local NRA_AVD_CM = Parameter("NRA_AVD_CM")
 
 -- Global variables
 local lua_rfnd_backend  -- store lua backend here
@@ -32,6 +35,8 @@ local distance_received = false
 local uart = nil
 local report_ms = uint32_t(0)
 local report_count = 0
+local avoid_count = 0
+local last_dist_cm = 0
 
 ---------------------------------- RFND DRIVER --------------------------------
 
@@ -138,6 +143,37 @@ function send_distance(distance_m)
     end
 end
 
+function check_auto()
+    -- check if user disable avoidance function
+    if NRA_AVD_CM:get() < 50 then
+        return
+    end
+
+    -- check distance only in AUTO
+    if vehicle:get_mode() ~= 3 then
+        return
+    end
+
+    -- check distance only if airpseed is greater than MIN_SPD
+    if ahrs:groundspeed_vector():length() <= 1 then
+        return
+    end
+
+    -- check if we're getting near an obstacle
+    if distance < NRA_AVD_CM:get() and distance <= last_dist_cm then
+        avoid_count = avoid_count + 1
+    else
+        avoid_count = 0
+    end
+    last_dist_cm = distance
+
+    if avoid_count >= 3 then
+        vehicle:set_mode(5)
+        gcs:send_text(2, string.format("Obstacle detected at %d cm, switch to Loiter", distance))
+        avoid_count = 0
+    end
+end
+
 -- -------------------------------- MAIN --------------------------------
 
 function update()
@@ -148,6 +184,7 @@ function update()
         report_count = report_count +1
         send_distance(distance/100)
         distance_received = false
+        check_auto()
     else
         send_distance(OUT_OF_RANGE_HIGH)
     end
