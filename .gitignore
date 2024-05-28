@@ -3,4 +3,5 @@
 *.tlog
 *.raw
 *.txt
+.python-version
 others/
