@@ -37,24 +37,31 @@ ENG_VIBE_ON:init("ENG_VIBE_ON")
 
 -- costants
 local MODE_HOLD = 4
-local STARTER_TIMEOUT_ON_MS = 6000 -- starter timeout to prevent starter failure
-local STARTER_TIMEOUT_OFF_MS = 5000 -- starter timeout to prevent starter failure
+local STARTER_TIMEOUT_ON_MS = 5000 -- starter timeout to prevent starter failure
+local STARTER_TIMEOUT_OFF_MS = 8000 -- waiting time to run starter after timeout stopped it
+local STARTER_TIMEOUT_LONG_MS = 20000 -- waiting time to run starter after STARTER_TIMEOUT_LONG_COUNT consecutive times
+local STARTER_TIMEOUT_LONG_COUNT = 3
 local STARTER_OFF = 0
 local STARTER_ON = 1
 local STARTER_ON_TIMEOUT = 2
+local STARTER_OFF_TIMEOUT = 7
 local STARTER_OFF_VIBE = 3
 local STARTER_ON_VIBE = 4
+local STARTER_ON_TIMEOUT_LONG = 5
+local STARTER_OFF_TIMEOUT_LONG = 6
 local STARTER_INIT = -1
 
---global variables
+-- global variables
 local eng_ch = 0
 local fuel_state = -1
 local ignition_on = 1
 local ignition_off = 0
 local start_on = 1
 local start_off = 0
+local starter_count = 0
 local starter_state = STARTER_INIT
 local starter_on_ms = uint32_t(0)
+local starter_off_ms = uint32_t(0)
 local last_gcs_send = uint32_t(0)
 
 -- init gpio
@@ -102,6 +109,7 @@ function set_starter()
     if starter_state == STARTER_INIT then
         gpio:write(START_PIN, start_off)
         if rc:get_pwm(eng_ch) < 1800 then
+            starter_off_ms = millis()
             starter_state = STARTER_OFF
         end
 
@@ -110,16 +118,33 @@ function set_starter()
         if vibrations:length() < ENG_VIBE_OFF:get() then
             if rc:get_pwm(eng_ch) > 1850 then
                 starter_on_ms = millis()
-                gpio:write(START_PIN, start_on)
-                starter_state = STARTER_ON
-                if ENG_DEBUG:get() > 1 then
-                    gcs:send_text('6', "Starter ON")
+                -- try starter for 3 times, wait a longer timeout
+                if starter_count == STARTER_TIMEOUT_LONG_COUNT then
+                    starter_state = STARTER_ON_TIMEOUT_LONG
+                    if ENG_DEBUG:get() > 1 then
+                        gcs:send_text('6', "Starter TIMEOUT LONG")
+                    end
+                else
+                    gpio:write(START_PIN, start_on)
+                    starter_state = STARTER_ON
+                    starter_count = starter_count+1
+                    if ENG_DEBUG:get() > 1 then
+                        gcs:send_text('6', "Starter ON")
+                    end
                 end
             end
         else
+            starter_state = STARTER_OFF_VIBE
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Vibrations too HIGH, prevent starter")
-                starter_state = STARTER_OFF_VIBE
+            end
+        end
+
+        -- reset starter_count after STARTER_TIMEOUT_LONG_MS
+        if (millis() - starter_off_ms > STARTER_TIMEOUT_LONG_MS) and (starter_count > 0) then
+            starter_count = 0
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "starter count reset to 0")
             end
         end
 
@@ -127,6 +152,7 @@ function set_starter()
     elseif starter_state == STARTER_ON then
         if rc:get_pwm(eng_ch) < 1800 then
             gpio:write(START_PIN, start_off)
+            starter_off_ms = millis()
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
@@ -140,17 +166,9 @@ function set_starter()
             end
         end
 
-    -- timeout after engine start, user need to switch off starter and wait 5 seconds
-    elseif starter_state == STARTER_ON_TIMEOUT then
-        if (rc:get_pwm(eng_ch) < 1800) and (millis() - starter_on_ms > STARTER_TIMEOUT_OFF_MS) then
-            starter_state = STARTER_OFF
-            if ENG_DEBUG:get() > 1 then
-                gcs:send_text('6', "Starter OFF")
-            end
-        end
-
     elseif starter_state == STARTER_OFF_VIBE then
         if vibrations:length() < ENG_VIBE_OFF:get() then
+            starter_off_ms = millis()
             starter_state = STARTER_OFF
                 if ENG_DEBUG:get() > 1 then
                     gcs:send_text('6', "Vibrations OK")
@@ -164,12 +182,65 @@ function set_starter()
 
     elseif starter_state == STARTER_ON_VIBE then
         if rc:get_pwm(eng_ch) < 1800 then
+            starter_off_ms = millis()
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
             end
         end
+
+    -- timeout after engine start, user need to switch off starter and wait STARTER_TIMEOUT_OFF_MS
+    elseif starter_state == STARTER_ON_TIMEOUT then
+        if (rc:get_pwm(eng_ch) < 1800) then
+            starter_state = STARTER_OFF_TIMEOUT
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF TIMEOUT")
+            end
+        end
+
+    elseif starter_state == STARTER_OFF_TIMEOUT then
+        if rc:get_pwm(eng_ch) > 1850 then
+            starter_state = STARTER_ON_TIMEOUT
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter ON TIMEOUT")
+            end
+        elseif (millis() - starter_on_ms > STARTER_TIMEOUT_OFF_MS) then
+            starter_off_ms = millis()
+            starter_state = STARTER_OFF
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF")
+            end
+        end
+
+    -- long timeout, if user turned on starter 3 consecutive times
+    elseif starter_state == STARTER_ON_TIMEOUT_LONG then
+        if rc:get_pwm(eng_ch) < 1800 then
+            starter_state = STARTER_OFF_TIMEOUT_LONG
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF TIMEOUT LONG")
+            end
+        end
+
+    elseif starter_state == STARTER_OFF_TIMEOUT_LONG then
+        if rc:get_pwm(eng_ch) > 1850 then
+            starter_state = STARTER_ON_TIMEOUT_LONG
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter ON TIMEOUT LONG")
+            end
+        elseif millis() - starter_on_ms > STARTER_TIMEOUT_LONG_MS then
+            starter_count = 0
+            starter_off_ms = millis()
+            starter_state = STARTER_OFF
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF")
+            end
+        end
+
+    else
+        gcs:send_text('4', "Unknown starter state")
     end
+
+    
 end
 
 function check_fuel()
