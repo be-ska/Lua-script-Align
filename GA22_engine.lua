@@ -1,4 +1,4 @@
--- emergency stop, starter and fuel check for Align mower - version 1.0
+-- emergency stop, starter and fuel check for Align mower - version 2.0-beta
 -- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
@@ -9,14 +9,20 @@ local IGNITION_PIN = 59 -- AP3 ch 10
 
 -- parameters
 local PARAM_TABLE_KEY = 41
-assert(param:add_table(PARAM_TABLE_KEY, "ENG_", 7), "could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "ENG_", 11), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add param 1")
-assert(param:add_param(PARAM_TABLE_KEY, 2, "FUEL", 0), "could not add param 2") -- keep to ensure compatibility
+assert(param:add_param(PARAM_TABLE_KEY, 2, "FUEL", 0), "could not add param 2")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "CH", 6), "could not replace param 3")
 assert(param:add_param(PARAM_TABLE_KEY, 4, "REV_IGN", 1), "could not replace param 4")
 assert(param:add_param(PARAM_TABLE_KEY, 5, "REV_STR", 0), "could not replace param 5")
 assert(param:add_param(PARAM_TABLE_KEY, 6, "VIBE_OFF", 0.5), "could not replace param 6")
-assert(param:add_param(PARAM_TABLE_KEY, 7, "VIBE_ON", 2), "could not replace param 7")
+assert(param:add_param(PARAM_TABLE_KEY, 7, "VIBE_ON", 2), "could not replace param 7") -- no use
+assert(param:add_param(PARAM_TABLE_KEY, 8, "THR_RC", 11), "could not replace param 8")
+assert(param:add_param(PARAM_TABLE_KEY, 9, "THR_SR", 7), "could not replace param 9")
+assert(param:add_param(PARAM_TABLE_KEY, 10, "THR_MIN", 1000), "could not replace param 10")
+assert(param:add_param(PARAM_TABLE_KEY, 11, "THR_MAX", 2000), "could not replace param 11")
+
+
 
 -- bind parameters to variables
 local ENG_DEBUG = Parameter()
@@ -25,7 +31,10 @@ local ENG_REV_IGN = Parameter()
 local ENG_REV_STR = Parameter()
 local ENG_CH = Parameter()
 local ENG_VIBE_OFF = Parameter()
-local ENG_VIBE_ON = Parameter()
+local ENG_THR_RC = Parameter()
+local ENG_THR_SR = Parameter()
+local ENG_THR_MIN = Parameter()
+local ENG_THR_MAX = Parameter()
 
 ENG_DEBUG:init("ENG_DEBUG")
 ENG_FUEL:init("ENG_FUEL")
@@ -33,7 +42,10 @@ ENG_CH:init("ENG_CH")
 ENG_REV_IGN:init("ENG_REV_IGN")
 ENG_REV_STR:init("ENG_REV_STR")
 ENG_VIBE_OFF:init("ENG_VIBE_OFF")
-ENG_VIBE_ON:init("ENG_VIBE_ON")
+ENG_THR_RC:init("ENG_THR_RC")
+ENG_THR_SR:init("ENG_THR_SR")
+ENG_THR_MAX:init("ENG_THR_MAX")
+ENG_THR_MIN:init("ENG_THR_MIN")
 
 -- costants
 local MODE_HOLD = 4
@@ -49,6 +61,8 @@ local STARTER_OFF_VIBE = 3
 local STARTER_ON_VIBE = 4
 local STARTER_ON_TIMEOUT_LONG = 5
 local STARTER_OFF_TIMEOUT_LONG = 6
+local STARTER_ON_THR_LOW = 8
+local STARTER_OFF_THR_LOW = 9
 local STARTER_INIT = -1
 
 -- global variables
@@ -124,6 +138,13 @@ function set_starter()
                     if ENG_DEBUG:get() > 1 then
                         gcs:send_text('6', "Starter TIMEOUT LONG")
                     end
+                -- throttle must be near maximum
+                elseif ENG_THR_RC:get() > 3 and rc:get_pwm(ENG_THR_RC:get()) < 1850 then
+                    starter_state = STARTER_ON_THR_LOW
+                    if ENG_DEBUG:get() > 1 then
+                        gcs:send_text('6', "Starter ON THR LOW")
+                    end
+                -- starter ON
                 else
                     gpio:write(START_PIN, start_on)
                     starter_state = STARTER_ON
@@ -236,11 +257,31 @@ function set_starter()
             end
         end
 
+    elseif starter_state == STARTER_ON_THR_LOW then
+        if rc:get_pwm(eng_ch) < 1800 then
+            starter_state = STARTER_OFF_THR_LOW
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF THR LOW")
+            end
+        end
+    
+    elseif starter_state == STARTER_OFF_THR_LOW then
+        if rc:get_pwm(eng_ch) > 1850 then
+            starter_state = STARTER_ON_THR_LOW
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter ON THR LOW")
+            end
+        elseif rc:get_pwm(ENG_THR_RC:get()) > 1870 then
+            starter_off_ms = millis()
+            starter_state = STARTER_OFF
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter OFF")
+            end
+        end
+
     else
         gcs:send_text('4', "Unknown starter state")
     end
-
-    
 end
 
 function check_fuel()
@@ -266,11 +307,23 @@ function check_fuel()
     end
 end
 
+function set_throttle()
+    -- scale output throttle
+    local pwm_out_scaled = ((rc:get_pwm(ENG_THR_RC:get())-1000)/1000)*(ENG_THR_MAX:get() - ENG_THR_MIN:get())+ ENG_THR_MIN:get()
+    if pwm_out_scaled < ENG_THR_MIN:get() then
+        pwm_out_scaled = ENG_THR_MIN:get()
+    end
+    SRV_Channels:set_output_pwm_chan(ENG_THR_SR:get()-1, pwm_out_scaled)
+end
+
 function update()
     set_ignition()
     set_starter()
     if ENG_FUEL:get() > 0 then
         check_fuel()
+    end
+    if ENG_THR_RC:get() > 3 and ENG_THR_SR:get() > 3 then
+        set_throttle()
     end
     if millis() - last_gcs_send > 1000 then
         last_gcs_send = millis()
