@@ -1,4 +1,4 @@
--- emergency stop, starter and fuel check for Align mower - version 2.0-beta
+-- emergency stop, starter and fuel check for Align mower - version 2.1-beta
 -- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
@@ -308,11 +308,33 @@ function check_fuel()
 end
 
 function set_throttle()
-    -- scale output throttle
-    local pwm_out_scaled = ((rc:get_pwm(ENG_THR_RC:get())-1000)/1000)*(ENG_THR_MAX:get() - ENG_THR_MIN:get())+ ENG_THR_MIN:get()
-    if pwm_out_scaled < ENG_THR_MIN:get() then
-        pwm_out_scaled = ENG_THR_MIN:get()
+    -- check maximum and minimum for reverse
+    local pwm_out_max = ENG_THR_MAX:get()
+    local pwm_out_min = ENG_THR_MIN:get()
+    local reversed = false
+    if pwm_out_max < pwm_out_min then
+        reversed = true
+        pwm_out_max = ENG_THR_MIN:get()
+        pwm_out_min = ENG_THR_MAX:get()
     end
+
+    -- nomralize range to [0 1]
+    local pwm_in = rc:get_pwm(ENG_THR_RC:get())
+    local pwm_in_norm
+    if reversed then
+        pwm_in_norm = (2000 - pwm_in) / 1000
+    else
+        pwm_in_norm = (pwm_in - 1000) / 1000
+    end
+    if pwm_in_norm < 0 then
+        pwm_in_norm = 0
+    elseif pwm_in_norm > 1 then
+        pwm_in_norm = 1
+    end
+
+    -- scale output throttle
+    local pwm_out_scaled = pwm_in_norm * (pwm_out_max - pwm_out_min) + pwm_out_min
+
     SRV_Channels:set_output_pwm_chan(ENG_THR_SR:get()-1, pwm_out_scaled)
 end
 
