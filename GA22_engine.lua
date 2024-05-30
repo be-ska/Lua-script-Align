@@ -75,7 +75,6 @@ local start_off = 0
 local starter_count = 0
 local starter_state = STARTER_INIT
 local starter_on_ms = uint32_t(0)
-local starter_off_ms = uint32_t(0)
 local last_gcs_send = uint32_t(0)
 
 -- init gpio
@@ -123,7 +122,6 @@ function set_starter()
     if starter_state == STARTER_INIT then
         gpio:write(START_PIN, start_off)
         if rc:get_pwm(eng_ch) < 1800 then
-            starter_off_ms = millis()
             starter_state = STARTER_OFF
         end
 
@@ -162,18 +160,18 @@ function set_starter()
         end
 
         -- reset starter_count after STARTER_TIMEOUT_LONG_MS
-        if (millis() - starter_off_ms > STARTER_TIMEOUT_LONG_MS) and (starter_count > 0) then
+        if (millis() - starter_on_ms > STARTER_TIMEOUT_LONG_MS) and (starter_count > 0) then
             starter_count = 0
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "starter count reset to 0")
             end
         end
 
-    -- starter is running, turn off after timeout or if increase of vibrations signal the engine has started
+    -- starter is running, turn off after timeout or if vibration increased
     elseif starter_state == STARTER_ON then
         if rc:get_pwm(eng_ch) < 1800 then
             gpio:write(START_PIN, start_off)
-            starter_off_ms = millis()
+            starter_on_ms = millis()
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
@@ -189,7 +187,6 @@ function set_starter()
 
     elseif starter_state == STARTER_OFF_VIBE then
         if vibrations:length() < ENG_VIBE_OFF:get() then
-            starter_off_ms = millis()
             starter_state = STARTER_OFF
                 if ENG_DEBUG:get() > 1 then
                     gcs:send_text('6', "Vibrations OK")
@@ -202,8 +199,12 @@ function set_starter()
         end
 
     elseif starter_state == STARTER_ON_VIBE then
-        if rc:get_pwm(eng_ch) < 1800 then
-            starter_off_ms = millis()
+        if vibrations:length() < ENG_VIBE_OFF:get() then
+            starter_state = STARTER_ON_TIMEOUT
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter ON TIMEOUT")
+            end
+        elseif rc:get_pwm(eng_ch) < 1800 then
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
@@ -217,6 +218,11 @@ function set_starter()
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF TIMEOUT")
             end
+        elseif (millis() - starter_on_ms > STARTER_TIMEOUT_OFF_MS/2) and vibrations:length() > ENG_VIBE_OFF:get() then
+        starter_state = STARTER_ON_VIBE
+            if ENG_DEBUG:get() > 1 then
+                gcs:send_text('6', "Starter ON VIBE")
+            end
         end
 
     elseif starter_state == STARTER_OFF_TIMEOUT then
@@ -226,10 +232,16 @@ function set_starter()
                 gcs:send_text('6', "Starter ON TIMEOUT")
             end
         elseif (millis() - starter_on_ms > STARTER_TIMEOUT_OFF_MS) then
-            starter_off_ms = millis()
-            starter_state = STARTER_OFF
-            if ENG_DEBUG:get() > 1 then
-                gcs:send_text('6', "Starter OFF")
+            if vibrations:length() < ENG_VIBE_OFF:get() then
+                starter_state = STARTER_OFF
+                if ENG_DEBUG:get() > 1 then
+                    gcs:send_text('6', "Starter OFF")
+                end
+            else
+                starter_state = STARTER_OFF_VIBE
+                if ENG_DEBUG:get() > 1 then
+                    gcs:send_text('6', "Starter OFF VIBE")
+                end
             end
         end
 
@@ -250,7 +262,6 @@ function set_starter()
             end
         elseif millis() - starter_on_ms > STARTER_TIMEOUT_LONG_MS then
             starter_count = 0
-            starter_off_ms = millis()
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
@@ -272,7 +283,6 @@ function set_starter()
                 gcs:send_text('6', "Starter ON THR LOW")
             end
         elseif rc:get_pwm(ENG_THR_RC:get()) > 1870 then
-            starter_off_ms = millis()
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
