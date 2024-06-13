@@ -195,7 +195,7 @@ function init()
   if MNT1_PITCH_MAX:get() == nil or MNT1_PITCH_MIN:get() == nil or MNT1_ROLL_MAX:get() == nil or MNT1_ROLL_MIN:get() == nil or MNT1_YAW_MAX:get() == nil or MNT1_YAW_MIN:get() == nil then
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: check MNT1_ parameters")    
     need_reboot = true
-    end
+  end
 
   local rc_rate = MNT1_RC_RATE:get()
   if rc_rate == nil or rc_rate <= 5 then
@@ -211,7 +211,11 @@ function init()
     gcs:send_text(MAV_SEVERITY.CRITICAL, "G3P: set G3P_CENTER_CH with RC centering channel")
     need_reboot = true
   else
-    MOUNT_RC_CENTER = center_rc
+    MOUNT_RC_CENTER = math.floor(center_rc)
+    local center_param_string = "RC" .. MOUNT_RC_CENTER .. "_OPTION"
+    if param:get(center_param_string) == 19 then
+      param:set(center_param_string, 0)
+    end
   end
 
   local expo_rc = G3P_RC_EXPO:get()
