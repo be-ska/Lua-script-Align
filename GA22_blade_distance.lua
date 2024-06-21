@@ -1,8 +1,7 @@
--- control the blade distance from the ground of Align GA22
+-- control the blade distance from the ground of Align mowers - version 1.1
 
 -- user parameters
 local MILLIS_FULL_UP = 12000
-local MILLIS_FULL_DOWN = 12000
 local STEP_MAX = 6
 local PWM_UP = 2000
 local PWM_NEUTRAL = 1500
@@ -35,37 +34,45 @@ BLADE_CH:init("BLADE_CH")
 local STEP_TO_MILLIS = BLADE_STEP:get()
 
 -- global variables
-local millis_update = MILLIS_UPDATE
 local pwm_up = PWM_UP
 local pwm_down = PWM_DOWN
 local channel = 1
 
-function set_distance(step)
-    if BLADE_DEBUG:get() > 0 then
-        gcs:send_text('6', "set distance call")
-    end
-    if step > 0 then
-        millis_update = step*STEP_TO_MILLIS
-        SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_up, millis_update)
-    elseif step < 0 then
-        millis_update = -step*STEP_TO_MILLIS
-        SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_down, millis_update)
-    end
-end
+-- move servo variables
+local pwm_target = 0
+local pwm_now = 0
+local timeout = 0
+local start_ms = uint32_t(0)
 
-function home()
-    if BLADE_DEBUG:get() > 0 then
-        gcs:send_text('6', "home call")
+function move_servo()
+    if pwm_target > pwm_now then
+        pwm_now = pwm_now + 100
+    elseif pwm_target < pwm_now then
+        pwm_now = pwm_now - 100
+    elseif pwm_target ~= PWM_NEUTRAL then
+        if millis() - start_ms >= timeout then
+            pwm_target = PWM_NEUTRAL
+            return move_servo, 0
+        end
+    else
+        return update, 0
     end
-    SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_up, MILLIS_FULL_UP)
-    millis_update = MILLIS_FULL_UP
+    if BLADE_DEBUG:get() > 1 then
+        gcs:send_text('6', string.format("set servo: channel = %d, pwm = %d", channel, pwm_now))
+    end
+    SRV_Channels:set_output_pwm_chan(channel, pwm_now)
+    
+    return move_servo, 30
 end
 
 function update()
     SRV_Channels:set_output_pwm_chan(channel, PWM_NEUTRAL)
+    -- get params
     STEP_TO_MILLIS = BLADE_STEP:get()
     local current_height = BLADE_CURRENT_HEIGHT:get()
     local set_height = BLADE_SET_HEIGHT:get()
+
+    -- check nil params
     if current_height == nil then
         BLADE_CURRENT_HEIGHT:set_and_save(0)
         if BLADE_DEBUG:get() > 0 then
@@ -78,24 +85,58 @@ function update()
             gcs:send_text('6', "BLADE_SET is null")
         end
     end
-    millis_update = MILLIS_UPDATE
 
-    if set_height ~= current_height then
-        if set_height >= STEP_MAX then
-            BLADE_CURRENT_HEIGHT:set_and_save(set_height)
-            set_distance(STEP_MAX)
-        elseif set_height == 1 then
-            BLADE_CURRENT_HEIGHT:set_and_save(set_height)
-            set_distance(-STEP_MAX)
-        elseif current_height < 1 then
-            BLADE_CURRENT_HEIGHT:set_and_save(STEP_MAX)
-            home()
-        else
-            BLADE_CURRENT_HEIGHT:set_and_save(set_height)
-            set_distance(set_height-current_height)        
-        end
+    -- check params limit
+    if set_height < 0 then
+        set_height = 0
+    elseif set_height > STEP_MAX then
+        set_height = STEP_MAX
     end
-    return update, millis_update
+
+    if current_height < 1 or set_height < 1 then
+        -- param out of range, go to homing procedure homing (move blade full up)
+        if BLADE_DEBUG:get() > 0 then
+            gcs:send_text('6', "Homing start")
+        end
+        BLADE_CURRENT_HEIGHT:set_and_save(STEP_MAX)
+        BLADE_SET_HEIGHT:set_and_save(STEP_MAX)
+        timeout = MILLIS_FULL_UP
+        start_ms = millis()
+        pwm_target = pwm_up
+        pwm_now = PWM_NEUTRAL
+        return move_servo, 0
+    elseif set_height > current_height then
+        -- move blade up
+        if BLADE_DEBUG:get() > 0 then
+            gcs:send_text('6', "Move UP")
+        end
+        BLADE_CURRENT_HEIGHT:set_and_save(set_height)
+        timeout = (set_height-current_height)*STEP_TO_MILLIS
+        start_ms = millis()
+        pwm_target = pwm_up
+        pwm_now = PWM_NEUTRAL
+        if set_height == STEP_MAX then
+            -- when going full up leave the servo for 500 ms longer, just to be sure to reach the maximum
+            timeout = timeout + 500
+        end
+        return move_servo, 0
+    elseif set_height < current_height then
+        -- move blade down
+        if BLADE_DEBUG:get() > 0 then
+            gcs:send_text('6', "Move DOWN")
+        end
+        BLADE_CURRENT_HEIGHT:set_and_save(set_height)
+        timeout = (current_height-set_height)*STEP_TO_MILLIS
+        start_ms = millis()
+        pwm_target = pwm_down
+        pwm_now = PWM_NEUTRAL
+        if set_height == 1 then
+            -- when going full down leave the servo for 500 ms longer, just to be sure to reach the minimum
+            timeout = timeout + 500
+        end
+        return move_servo, 0
+    end
+    return update, MILLIS_UPDATE
 end
 
 gcs:send_text('6', "blade_distance.lua is running")
@@ -107,9 +148,10 @@ if BLADE_REVERSE:get() > 0 then
     pwm_down = PWM_UP
 end
 
-if BLADE_CH:get() == nil then
+if BLADE_CH:get() == nil or BLADE_CH:get() < 1 then
     channel = 1
 else
+-- on old AP 4.2.x RC channels index is [0 15], newer firmwares is [1 16]
     channel = BLADE_CH:get() - 1
 end
 
