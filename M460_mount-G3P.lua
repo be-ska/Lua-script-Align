@@ -1,4 +1,4 @@
--- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.1
+-- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.2
 
   -- How to use
   --   Connect gimbal UART to one of the autopilot's serial ports
