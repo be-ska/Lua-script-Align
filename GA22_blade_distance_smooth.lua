@@ -38,6 +38,33 @@ local pwm_up = PWM_UP
 local pwm_down = PWM_DOWN
 local channel = 1
 
+-- move servo variables
+local pwm_target = 0
+local pwm_now = 0
+local timeout = 0
+local start_ms = uint32_t(0)
+
+function move_servo()
+    if pwm_target > pwm_now then
+        pwm_now = pwm_now + 100
+    elseif pwm_target < pwm_now then
+        pwm_now = pwm_now - 100
+    elseif pwm_target ~= PWM_NEUTRAL then
+        if millis() - start_ms >= timeout then
+            pwm_target = PWM_NEUTRAL
+            return move_servo, 0
+        end
+    else
+        return update, 0
+    end
+    if BLADE_DEBUG:get() > 1 then
+        gcs:send_text('6', string.format("set servo: channel = %d, pwm = %d", channel, pwm_now))
+    end
+    SRV_Channels:set_output_pwm_chan(channel, pwm_now)
+    
+    return move_servo, 30
+end
+
 function update()
     SRV_Channels:set_output_pwm_chan(channel, PWM_NEUTRAL)
     -- get params
@@ -73,34 +100,41 @@ function update()
         end
         BLADE_CURRENT_HEIGHT:set_and_save(STEP_MAX)
         BLADE_SET_HEIGHT:set_and_save(STEP_MAX)
-        SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_up, MILLIS_FULL_UP)
-        return update, MILLIS_FULL_UP
+        timeout = MILLIS_FULL_UP
+        start_ms = millis()
+        pwm_target = pwm_up
+        pwm_now = PWM_NEUTRAL
+        return move_servo, 0
     elseif set_height > current_height then
         -- move blade up
         if BLADE_DEBUG:get() > 0 then
             gcs:send_text('6', "Move UP")
         end
         BLADE_CURRENT_HEIGHT:set_and_save(set_height)
-        local timeout = (set_height-current_height)*STEP_TO_MILLIS
+        timeout = (set_height-current_height)*STEP_TO_MILLIS
+        start_ms = millis()
+        pwm_target = pwm_up
+        pwm_now = PWM_NEUTRAL
         if set_height == STEP_MAX then
             -- when going full up leave the servo for 500 ms longer, just to be sure to reach the maximum
             timeout = timeout + 500
         end
-        SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_up, timeout)
-        return update, timeout
+        return move_servo, 0
     elseif set_height < current_height then
         -- move blade down
         if BLADE_DEBUG:get() > 0 then
             gcs:send_text('6', "Move DOWN")
         end
         BLADE_CURRENT_HEIGHT:set_and_save(set_height)
-        local timeout = (current_height-set_height)*STEP_TO_MILLIS
+        timeout = (current_height-set_height)*STEP_TO_MILLIS
+        start_ms = millis()
+        pwm_target = pwm_down
+        pwm_now = PWM_NEUTRAL
         if set_height == 1 then
             -- when going full down leave the servo for 500 ms longer, just to be sure to reach the minimum
             timeout = timeout + 500
         end
-        SRV_Channels:set_output_pwm_chan_timeout(channel, pwm_down, timeout)
-        return update, timeout
+        return move_servo, 0
     end
     return update, MILLIS_UPDATE
 end
