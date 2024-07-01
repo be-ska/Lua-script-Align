@@ -137,7 +137,7 @@ function set_starter()
                         gcs:send_text('6', "Starter TIMEOUT LONG")
                     end
                 -- throttle must be near maximum
-                elseif ENG_THR_RC:get() > 3 and rc:get_pwm(ENG_THR_RC:get()) < 1850 then
+                elseif ENG_THR_RC:get() > 3 and rc:get_pwm(ENG_THR_RC:get()) < 1750 then
                     starter_state = STARTER_ON_THR_LOW
                     if ENG_DEBUG:get() > 1 then
                         gcs:send_text('6', "Starter ON THR LOW")
@@ -282,7 +282,7 @@ function set_starter()
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter ON THR LOW")
             end
-        elseif rc:get_pwm(ENG_THR_RC:get()) > 1870 then
+        elseif rc:get_pwm(ENG_THR_RC:get()) > 1800 then
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
