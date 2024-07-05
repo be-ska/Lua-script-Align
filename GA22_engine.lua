@@ -343,7 +343,7 @@ function set_throttle()
     end
 
     -- scale output throttle
-    local pwm_out_scaled = pwm_in_norm * (pwm_out_max - pwm_out_min) + pwm_out_min
+    local pwm_out_scaled = math.floor(pwm_in_norm * (pwm_out_max - pwm_out_min) + pwm_out_min)
 
     SRV_Channels:set_output_pwm_chan(ENG_THR_SR:get()-1, pwm_out_scaled)
 end
