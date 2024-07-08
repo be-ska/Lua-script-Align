@@ -1,8 +1,8 @@
--- control the blade distance from the ground of Align mowers - version 1.2
+-- control the blade distance from the ground of Align mowers - version 1.3
 
 -- user parameters
-local RELAY_PIN_UP = 00 -- TODO
-local RELAY_PIN_DOWN = 00 -- TODO
+local RELAY_PIN_UP = 51 -- APx ch 2
+local RELAY_PIN_DOWN = 58 -- APx ch 9
 local MILLIS_FULL_UP = 12000
 local STEP_MAX = 6
 local PWM_UP = 2000
@@ -131,9 +131,23 @@ gcs:send_text('6', "blade_distance.lua is running")
 
 -- chek use relay
 if USE_RELAY > 0 then
+    if param:get("SERVO2_FUNCTION") > -1 or param:get("SERVO9_FUNCTION") > -1 then
+        param:set_and_save("SERVO2_FUNCTION", -1)
+        param:set_and_save("SERVO9_FUNCTION", -1)
+        gcs:send_text(3,"Reboot to use blade control")
+        -- die here
+        return
+    end
     gpio:pinMode(RELAY_PIN_UP,1) -- set RELAY pin as output
     gpio:pinMode(RELAY_PIN_DOWN,1) -- set RELAY pin as output
 else
+    if param:get("SERVO2_FUNCTION") < 0 or param:get("SERVO9_FUNCTION") < 0 then
+        param:set_and_save("SERVO2_FUNCTION", 0)
+        param:set_and_save("SERVO9_FUNCTION", 0)
+        gcs:send_text(3,"Reboot to use blade control")
+        -- die here
+        return
+    end
     -- use PWM output: check channel
     if BLADE_CH:get() == nil or BLADE_CH:get() < 1 then
         channel = 1
