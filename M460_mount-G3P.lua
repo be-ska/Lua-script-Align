@@ -1,4 +1,4 @@
--- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.2
+-- mount-G3P-driver.lua: Align G3P mount/gimbal driver - version 1.3
 
   -- How to use
   --   Connect gimbal UART to one of the autopilot's serial ports
@@ -11,13 +11,12 @@
 
 -- parameters
 local PARAM_TABLE_KEY = 41
-assert(param:add_table(PARAM_TABLE_KEY, "G3P_", 5), "could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "G3P_", 6), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add G3P_DEBUG param")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "MS", 100), "could not add G3P_MS param")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "CENTER_CH", 9), "could not add G3P_CENTER_CH param")
-assert(param:add_param(PARAM_TABLE_KEY, 4, "RC_EXPO", 2), "could not add G3P_CENTER_CH param")
-assert(param:add_param(PARAM_TABLE_KEY, 5, "CAM", 2), "could not add G3P_CENTER_CH param")
-
+assert(param:add_param(PARAM_TABLE_KEY, 4, "RC_EXPO", 2), "could not add G3P_RC_EXPO param")
+assert(param:add_param(PARAM_TABLE_KEY, 5, "CAM", 2), "could not add G3P_CAM param")
 
 -- bind parameters to variables
 local G3P_DEBUG = Parameter("G3P_DEBUG")  -- debug level. 0:disabled 1:enabled 2:enabled with attitude reporting
@@ -84,6 +83,7 @@ local roll_deg = 0
 local pitch_deg = 0
 local last_print_ms = uint32_t(0)       -- system time that debug output was last printed
 local last_angle_received_ms = uint32_t(0)
+local angle_control_started_ms = uint32_t(0)
 
 -- get lowbyte of a number
 function lowbyte(num)
@@ -555,6 +555,39 @@ function check_centering()
   return false
 end
 
+function angle_controller(pitch_des_deg)
+  if angle_control_started_ms == uint32_t(0) then
+    -- set controller start timer
+    angle_control_started_ms = millis()
+  end
+
+  -- p controller for gimbal angle
+  local pitch_error = pitch_des_deg - pitch_deg
+  local pitch_rate = 10 * pitch_error
+
+  -- limit rate
+  if pitch_rate > 120 then
+    pitch_rate = 120
+  elseif pitch_rate < -120 then
+    pitch_rate = -120
+  elseif pitch_rate < 6 and pitch_rate >= 0 then
+    pitch_rate = 6
+  elseif pitch_rate > -6 and pitch_rate < 0 then
+    pitch_rate = -6
+  end
+  send_target_angles(pitch_rate, 0, 0)
+  if G3P_DEBUG:get() > 0 then
+    gcs:send_text(MAV_SEVERITY.INFO, string.format("G3P pitch controller: angle = %f, error = %f, rate = %f", pitch_deg, pitch_error, pitch_rate))
+  end
+
+  if (math.abs(pitch_error) < 0.2) or (millis() - angle_control_started_ms) > 10000 then
+    -- go back to rc targeting if angle is reached or timeout
+    angle_control_started_ms = uint32_t(0)
+    mount:set_mode(MOUNT_INSTANCE,3)
+  end
+
+end
+
 -- the main update function
 function update()
 
@@ -587,8 +620,9 @@ function update()
     center_gimbal()
 
   elseif des_roll_deg and des_pitch_deg and des_yaw_deg then
-    gcs:send_text(MAV_SEVERITY.ERROR, "G3P: set MNT1_RC_RATE parameter")
-    return update, 2000
+    -- faster update rate for angle controller
+    angle_controller(des_pitch_deg)
+    return update, 40
 
   elseif des_roll_degs and des_pitch_degs and des_yaw_degs then
     -- add expo
