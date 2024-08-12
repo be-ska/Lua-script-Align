@@ -1,4 +1,4 @@
--- emergency stop, starter and fuel check for Align mower - version 2.1-beta
+-- emergency stop, starter and fuel check for Align mower - version 2.1
 -- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
@@ -19,10 +19,8 @@ assert(param:add_param(PARAM_TABLE_KEY, 6, "VIBE_OFF", 0.5), "could not replace 
 assert(param:add_param(PARAM_TABLE_KEY, 7, "VIBE_ON", 2), "could not replace param 7") -- no use
 assert(param:add_param(PARAM_TABLE_KEY, 8, "THR_RC", 11), "could not replace param 8")
 assert(param:add_param(PARAM_TABLE_KEY, 9, "THR_SR", 7), "could not replace param 9")
-assert(param:add_param(PARAM_TABLE_KEY, 10, "THR_MIN", 1000), "could not replace param 10")
-assert(param:add_param(PARAM_TABLE_KEY, 11, "THR_MAX", 2000), "could not replace param 11")
-
-
+assert(param:add_param(PARAM_TABLE_KEY, 10, "THR_MIN", 1625), "could not replace param 10")
+assert(param:add_param(PARAM_TABLE_KEY, 11, "THR_MAX", 1375), "could not replace param 11")
 
 -- bind parameters to variables
 local ENG_DEBUG = Parameter()
