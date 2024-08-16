@@ -1,4 +1,4 @@
--- control the blade distance from the ground of Align mowers - version 1.4
+-- control the blade distance from the ground of Align mowers - version 1.5
 
 -- user parameters
 local RELAY_PIN_UP = 51 -- APx ch 2
@@ -12,7 +12,7 @@ local MILLIS_UPDATE = 100
 
 -- parameters
 local PARAM_TABLE_KEY = 40
-assert(param:add_table(PARAM_TABLE_KEY, "BLADE_", 8), "could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "BLADE_", 9), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "DEBUG", 0), "could not add param 1")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "CURR", 0), "could not add param 2")
 assert(param:add_param(PARAM_TABLE_KEY, 3, "SET", 0), "could not add param 3")
@@ -21,6 +21,8 @@ assert(param:add_param(PARAM_TABLE_KEY, 5, "REV", 0), "could not add param 5")
 assert(param:add_param(PARAM_TABLE_KEY, 6, "CH", 2), "could not add param 6")
 assert(param:add_param(PARAM_TABLE_KEY, 7, "RELAY", 1), "could not add param 7")
 assert(param:add_param(PARAM_TABLE_KEY, 8, "DOWN", 0.9), "could not add param 8")
+assert(param:add_param(PARAM_TABLE_KEY, 9, "RCIN", 0), "could not add param 9")
+
 
 -- bind parameters to variables
 local BLADE_DEBUG = Parameter()
@@ -31,6 +33,7 @@ local BLADE_REVERSE = Parameter()
 local BLADE_CH = Parameter()
 local BLADE_RELAY = Parameter()
 local BLADE_DOWN = Parameter()
+local BLADE_RCIN = Parameter()
 BLADE_DEBUG:init("BLADE_DEBUG")
 BLADE_CURRENT_HEIGHT:init("BLADE_CURR")
 BLADE_SET_HEIGHT:init("BLADE_SET")
@@ -39,7 +42,9 @@ BLADE_REVERSE:init("BLADE_REV")
 BLADE_CH:init("BLADE_CH")
 BLADE_RELAY:init("BLADE_RELAY")
 BLADE_DOWN:init("BLADE_DOWN")
+BLADE_RCIN:init("BLADE_RCIN")
 local USE_RELAY = BLADE_RELAY:get()
+local USE_RCIN = BLADE_RCIN:get()
 
 -- global variables
 local pwm_up = PWM_UP
@@ -130,6 +135,14 @@ function update()
     return update, MILLIS_UPDATE
 end
 
+function update_rcin()
+    local pwm = rc:get_pwm(USE_RCIN)
+    if pwm > 600 then
+        set_output(pwm)
+    end
+    return update_rcin, 50
+end
+
 function init()
 
     gcs:send_text('6', "blade_distance.lua is running")
@@ -171,7 +184,13 @@ function init()
         pwm_down = PWM_UP
     end
 
-    return update, 1000
+    if USE_RCIN == nil or USE_RCIN == 0 then
+        return update, 1000
+    else
+        return update_rcin, 1000
+    end
+
+    
 end
 
 return init, 100
