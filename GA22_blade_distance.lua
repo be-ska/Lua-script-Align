@@ -137,8 +137,12 @@ end
 
 function update_rcin()
     local pwm = rc:get_pwm(USE_RCIN)
-    if pwm > 600 then
-        set_output(pwm)
+    if pwm > 600 and pwm < 1300 then
+        set_output(pwm_down)
+    elseif pwm > 1700 then
+        set_output(pwm_up)
+    else
+        set_output(PWM_NEUTRAL)
     end
     return update_rcin, 50
 end
