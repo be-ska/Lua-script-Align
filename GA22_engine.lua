@@ -1,4 +1,4 @@
--- emergency stop, starter and fuel check for Align mower - version 2.1
+-- emergency stop, starter and fuel check for Align mower - version 2.2
 -- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
@@ -59,8 +59,6 @@ local STARTER_OFF_VIBE = 3
 local STARTER_ON_VIBE = 4
 local STARTER_ON_TIMEOUT_LONG = 5
 local STARTER_OFF_TIMEOUT_LONG = 6
-local STARTER_ON_THR_LOW = 8
-local STARTER_OFF_THR_LOW = 9
 local STARTER_INIT = -1
 
 -- global variables
@@ -133,12 +131,6 @@ function set_starter()
                     starter_state = STARTER_ON_TIMEOUT_LONG
                     if ENG_DEBUG:get() > 1 then
                         gcs:send_text('6', "Starter TIMEOUT LONG")
-                    end
-                -- throttle must be near maximum
-                elseif ENG_THR_RC:get() > 3 and rc:get_pwm(ENG_THR_RC:get()) < 1750 then
-                    starter_state = STARTER_ON_THR_LOW
-                    if ENG_DEBUG:get() > 1 then
-                        gcs:send_text('6', "Starter ON THR LOW")
                     end
                 -- starter ON
                 else
@@ -260,27 +252,6 @@ function set_starter()
             end
         elseif millis() - starter_on_ms > STARTER_TIMEOUT_LONG_MS then
             starter_count = 0
-            starter_state = STARTER_OFF
-            if ENG_DEBUG:get() > 1 then
-                gcs:send_text('6', "Starter OFF")
-            end
-        end
-
-    elseif starter_state == STARTER_ON_THR_LOW then
-        if rc:get_pwm(eng_ch) < 1800 then
-            starter_state = STARTER_OFF_THR_LOW
-            if ENG_DEBUG:get() > 1 then
-                gcs:send_text('6', "Starter OFF THR LOW")
-            end
-        end
-    
-    elseif starter_state == STARTER_OFF_THR_LOW then
-        if rc:get_pwm(eng_ch) > 1850 then
-            starter_state = STARTER_ON_THR_LOW
-            if ENG_DEBUG:get() > 1 then
-                gcs:send_text('6', "Starter ON THR LOW")
-            end
-        elseif rc:get_pwm(ENG_THR_RC:get()) > 1800 then
             starter_state = STARTER_OFF
             if ENG_DEBUG:get() > 1 then
                 gcs:send_text('6', "Starter OFF")
