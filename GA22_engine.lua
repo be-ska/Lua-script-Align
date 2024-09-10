@@ -1,10 +1,10 @@
--- emergency stop, starter and fuel check for Align mower - version 2.2
+-- emergency stop, starter and fuel check for Align mower - version 2.3
 -- for GA22 ENG_FUEL need to be set to 1, for GA45 and GA80 to 0
 
 -- user parameters
 local MILLIS_UPDATE = 100
 local START_PIN = 57 -- AP3 ch 8
-local FUEL_PIN = 58 -- AP3 ch 9
+local FUEL_PIN = 54 -- AP3 ch 5
 local IGNITION_PIN = 59 -- AP3 ch 10
 
 -- parameters
