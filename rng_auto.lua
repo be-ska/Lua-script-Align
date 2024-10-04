@@ -27,8 +27,8 @@ local last_gcs_string_sent = uint32_t(0)
 assert(param:add_table(PARAM_TABLE_KEY, "OAL_", 5), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "ENABLE", 1), "could not add param1")
 assert(param:add_param(PARAM_TABLE_KEY, 2, "DIST_CM", 600), "could not add param1")
-assert(param:add_param(PARAM_TABLE_KEY, 3, "NEAR_MS", 400), "could not add param3")
-assert(param:add_param(PARAM_TABLE_KEY, 4, "MIN_SPD", 1.0), "could not add param4")
+assert(param:add_param(PARAM_TABLE_KEY, 3, "NEAR_MS", 200), "could not add param3")
+assert(param:add_param(PARAM_TABLE_KEY, 4, "MIN_SPD", 0), "could not add param4")
 assert(param:add_param(PARAM_TABLE_KEY, 5, "DEBUG", 0), "could not add param5")
 local ENABLE = Parameter("OAL_ENABLE")
 local DIST_CM = Parameter("OAL_DIST_CM")
@@ -98,5 +98,5 @@ if DIST_CM:get() < 10 or NEAR_MS:get() < 100 then
     gcs:send_text(2, string.format("OAL: check parameters"))
     return
 end
-gcs:send_text(6, string.format("OAL is starting, dist=%f cm, timeout=%f ms,\nmin speed=%f m/s", DIST_CM:get(), NEAR_MS:get(), MIN_SPD:get()))
+gcs:send_text(6, string.format("OAL is starting, dist=%.1f cm, timeout=%.1f ms, min speed=%.1f m/s", DIST_CM:get(), NEAR_MS:get(), MIN_SPD:get()))
 return distance_check, 100
