@@ -157,7 +157,7 @@ function set_starter()
             end
         end
 
-    -- starter is running, turn off after timeout or if vibration increased
+    -- starter is running, turn off after timeout
     elseif starter_state == STARTER_ON then
         if rc:get_pwm(eng_ch) < 1800 then
             gpio:write(START_PIN, start_off)
