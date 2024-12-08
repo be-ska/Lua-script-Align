@@ -11,7 +11,7 @@ local MILLIS_UPDATE = 150
 local PARAM_TABLE_KEY = 42
 assert(param:add_table(PARAM_TABLE_KEY, "BUCK_", 2), "could not add param table")
 assert(param:add_param(PARAM_TABLE_KEY, 1, "CH", 2), "could not add param 1")
-assert(param:add_param(PARAM_TABLE_KEY, 2, "CH_B", 3), "could not add param 2")
+assert(param:add_param(PARAM_TABLE_KEY, 2, "CH_B", 4), "could not add param 2")
 
 -- bind parameters to variables
 local BUCK_CH = Parameter("BUCK_CH")
